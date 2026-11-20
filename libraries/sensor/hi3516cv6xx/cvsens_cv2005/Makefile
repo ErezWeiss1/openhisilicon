@@ -1,5 +1,3 @@
-$(error CV2005 development scaffold: sensor behavior is not ported; build intentionally disabled)
-
 LIB_NAME := libsns_cv2005
 
 ISP_DIR := $(CURDIR)/../../../isp
