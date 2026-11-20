@@ -124,3 +124,66 @@ MIPI transfer, ISP compatibility, calibration transfer, or camera operation.
 - Library name changed to libsns_cv2005.
 
 <!-- CV2005_ACCOMPLISHMENT_LOG_20261120 -->
+
+=== LATEST VERIFIED EIGHT-REGISTER CI BUILD (2026-11-20) ===
+
+<!-- CV2005_CI_ARTIFACTS_RUN44821720695 -->
+
+Source commit: eb5e0c3ce1c95ce6d23a23f57e5417f88a45d1bc
+Commit title: Align CV2005 sync payload with stock eight-register layout
+GitHub Actions run: 44821720695, attempt 1
+Run URL: https://github.com/ErezWeiss1/openhisilicon/actions/runs/44821720695
+Conclusion: completed / success
+
+The artifacts were downloaded locally and both SHA256 values matched
+the downloaded evidence/artifacts.sha256 manifest. Saved provenance
+identified the expected source commit.
+
+Artifacts:
+- libsns_cv2005.so: 92308 bytes
+  SHA256: 4a0bfa8a70bfe967a0e3d268186bb91a7170e90897819eb00234c3e2fb7f5917
+- libsns_cv2005.a: 83590 bytes
+  SHA256: 205f5dadbb0dc659815fce853299df62864af4ff9f4c35db6f2c94e4f65a0fd6
+
+Toolchain: OpenIPC Hi3516CV100 musl SDK
+Archive SHA256:
+466683e215a493144ba87b3d57a733864b6db318aad847bf0fd0616dda39729e
+
+Saved CI inspection reports:
+- ELF32, little-endian ARM shared library, EABI5, soft-float ABI flags.
+- ARM v5TEJ / Thumb-1 attributes.
+- Declared NEEDED dependency: libc.so.
+- No symbol-version information reported.
+- Shared library retains debug information and is not stripped.
+- Static archive members: cv2005_cmos.o, cv2005_sensor_ctrl.o,
+  sensor_common.o.
+- No warning: or error: lines found in the saved build log.
+
+Source state:
+- Eight queued sync registers, including two VMAX bytes at 0x301C/0x301D.
+- Selective current/previous-data update flags.
+- SHS conversion retained.
+- FPS callback retains margin 10; default/slow-frame AE paths retain 5.
+- Makefile blocker remains removed by historical commit dbace77.
+
+This is the latest downloaded, manifest-verified build baseline for
+the eight-register revision. Earlier build records and hashes are
+historical and do not identify these binaries.
+
+Scope and limitations:
+- Compile/link and static artifact inspection only.
+- The ELF ABI flags describe these artifacts; they do not independently
+  prove complete destination-runtime or SDK structure compatibility.
+- MPI/secure-C imports remain in the shared library. Prior destination
+  symbol/registration evidence is separate from this build inspection.
+- No binaries were executed during this download/inspection.
+- No deployment, flashing, or CV2005 hardware validation occurred in
+  this checkpoint.
+- Sensor startup, exposure/gain/FPS behavior, MIPI acceptance, calibration
+  transfer, image quality, and long-run stability remain unvalidated.
+
+Documentation precedence:
+This checkpoint supersedes older statements identifying run 44792107411
+as the current build baseline. It does not upgrade earlier gain-policy,
+MIPI-rate, initialization-table, or SDK-compatibility claims merely
+because the source compiled.
