@@ -73,7 +73,12 @@ jobs:
             arm*musleabi*) ;;
             *) echo '::error::Unexpected compiler target'; exit 1 ;;
           esac
-          { "$CC" -v; "$CC" -Q --help=target; } > evidence/compiler-configuration.txt 2>&1
+          {
+            echo '=== Compiler configuration ==='
+            "$CC" -v -E -x c /dev/null -o /dev/null
+            echo '=== Target options ==='
+            "$CC" -Q --help=target -x c -c /dev/null -o /dev/null
+          } > evidence/compiler-configuration.txt 2>&1
       - name: Cross-build
         run: |
           set -euo pipefail
