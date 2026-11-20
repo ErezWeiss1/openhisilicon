@@ -3,97 +3,117 @@ CV2005 DEVELOPMENT SCAFFOLD — ACCOMPLISHMENT LOG AND CURRENT STATUS
 Repository: openhisilicon-443c5d5b1bcd5998f01c92871129e2125948685a
 GitHub fork: https://github.com/ErezWeiss1/openhisilicon
 Branch: master
-Commit: f9ba19f — "Add CV2005 sensor scaffold and stage-1 gain/exposure changes"
+Commit: dbace7761765d01017335d179df88a5d128efef3 — "Remove CV2005 build blocker to enable build attempt"
 Push status: pushed to origin/master; origin/master tracking configured.
 
 === ACCOMPLISHED (chronological) ===
 
-1. Stage 2 payload-layout correction applied.
-   Backup: cv2005_patch_backups/stage2_*
+1. Stage 1 gain and exposure changes applied and committed in f9ba19f.
 
-2. Stage 3 exposure patch applied.
+2. Stage 2 timing/layout policy incorporated in ce4c261.
+   The obsolete cv2005_stage2_patch.py must not be run or applied again.
+
+3. Stage 3 exposure patch applied.
    Backup: cv2005_patch_backups/stage3_20261118_205948_412700
 
-3. Stage 4 gain-provenance patch applied.
+4. Stage 4 gain-provenance patch applied.
    Backup: cv2005_patch_backups/stage4_gain_provenance_20261118_211206_370053
 
-4. Stage 6 startup candidate applied.
+5. Stage 6 startup candidate applied.
    Backup: cv2005_patch_backups/stage6_startup_candidate_20261118_221254_255836
 
-5. Analog gain formula audited against stock evidence.
+6. Analog gain formula audited against stock evidence.
    249 records in analysis/cv2005_gain_tables/stock_analog_gain_249.csv
    checked against (256 * 1024) // (256 - code).
    Result: zero mismatches.
-   Report: cv2005_again_formula_audit_20261118.txt
-   Status: formula matches stock table exactly (1.0x at code 0x00,
-   32.0x at code 0xF8, 1/1024 granularity throughout).
-   The PROVENANCE ONLY comment in cv2005_cmos.c is stale on this point
-   and should be updated to reflect validation.
 
-6. Init-table match scan completed.
+7. Init-table match scan completed.
    Matching encodings found at stock firmware file offset 0x6E8898 for:
    - u8-address / u8-value pattern
    - little-endian u16-address / u16-value pattern
-   No match for big-endian u16-address/u8-value or LE u32/u32 patterns.
-   Recorded in CV2005_RESEARCH_NOTES.md.
 
-7. Stage 1 + Stage 2 committed as f9ba19f and pushed to
+8. Stage 1 and stage 2 committed as f9ba19f and pushed to
    ErezWeiss1/openhisilicon (branch master).
 
-8. Research notes updated with 2026-11-20 checkpoint
-   (CV2005_STAGE1_STAGE2_PUSHED_20261120).
+9. Destination ABI and ISP digital-gain policy documented in ce4c261.
 
-9. PORT_STATUS.txt updated to "partially ported" (previous revision).
+10. CV2005 Makefile build blocker removed in dbace77.
+
+11. GitHub Actions run 44792107411 successfully built the current CV2005
+    source with the OpenIPC Hi3516CV100 musl toolchain.
+
+=== VERIFIED MUSL-LINKED BUILD ===
+
+Run: https://github.com/ErezWeiss1/openhisilicon/actions/runs/44792107411
+Run ID: 44792107411
+Conclusion: success
+Source commit: a6c8bc0500a8d8020223f673b3e996c9dc474632
+Toolchain: OpenIPC Hi3516CV100 musl toolchain
+Toolchain archive SHA256: 466683e215a493144ba87b3d57a733864b6db318aad847bf0fd0616dda39729e
+
+The build commit changed only .github/workflows/build-cv2005.yml.
+Its CV2005 source is identical to local commit dbace77.
+
+Preserved artifact hashes:
+- libsns_cv2005.so: bb300ed510358da774161ce5fa2da12190bfac740de713141e4bdd2fce7f5e64
+- libsns_cv2005.a: 990148375a08a2ca34d926864be0bb17c82239ca5fa7bbbedcd0956405f76ed0
+
+Both hashes match evidence/artifacts.sha256.
+sha256sum -c evidence/artifacts.sha256 reports OK for both artifacts.
+
+Build scope: compile, link, and static ARM/libc checks only.
+This does not validate runtime initialization, gain or exposure behavior,
+MIPI transfer, ISP compatibility, calibration transfer, or camera operation.
 
 === CURRENT PORTED / STOCK-VERIFIED STATE ===
 
 - Register addresses: exposure 0x3048-0x304A, analog gain 0x3118,
   digital gain 0x311C-0x311D, frame length 0x301C-0x301E.
-- Nine-register sync payload (exposure 3, again 1, dgain 2, vmax 3).
+- Nine-register sync payload: exposure 3, analog gain 1, digital gain 2,
+  VMAX 3.
 - Exposure high-byte packing: shs >> 16.
-- Frame length 1180 lines at 30 fps; cap 14160 (provisional, stock-
-  derived, not board-validated).
-- Initialization table in cv2005_cfg.h: read from CV608 stock firmware
-  and checked against a register dump; reset -> 1 ms delay -> table ->
+- Nominal frame length: 1180 lines at 30 fps.
+- Development frame-length cap: 14160 lines; provisional, stock-derived,
+  not board-validated.
+- FPS range: 2.5 to 30.
+- Frame extension disabled; full_lines follows the selected frame length.
+- Invalid FPS rejected before timing calculation.
+- Initialization table in cv2005_cfg.h: read from CV608 stock firmware and
+  checked against a register dump; reset -> 1 ms delay -> table ->
   stream-start ordering preserved in cv2005_sensor_ctrl.c.
-- Invalid-FPS guard and frame-extension-disabled policy in cv2005_cmos.c.
 - MIPI rate 465 Mbps in cv2005_cfg.h, matching the stock boot banner.
-- Analog gain formula validated against 249-entry stock table
-  (zero mismatches).
+- Analog gain formula validated against the 249-entry stock table with
+  zero mismatches.
 
 === GAIN VALIDATION COMPLETE (all stock-verified) ===
 
 - Analog gain formula: 249 records, zero mismatches against
   (256 * 1024) // (256 - code). Validated.
 - Digital-gain model: 1/1024 model confirmed by
-  stock_digital_extension_224.csv (clean 1.0x-per-step extension
-  from 33x to 256x). Validated.
-- Sensor-gain policy: sensor digital gain stays at 1x across all
-  249 analog entries (reg311c/reg311d constant at 0x40/0x00).
-  Validated.
-- ISP-supplement policy: ISP-side gain extension beyond analog max
-  confirmed by digital extension table. Validated.
-- cv2005_cmos.c comment already reflects validation (no stale
-  PROVENANCE ONLY text remains in the on-disk file).
+  stock_digital_extension_224.csv.
+- Sensor-gain policy: sensor digital gain remains at 1x across all 249
+  analog entries; registers 0x311C/0x311D remain 0x40/0x00.
+- ISP-supplement policy: destination majestic expects sensor digital gain
+  pinned at 1x and supplements using ISP gain.
 
 === STILL UNRESOLVED ===
 
-- Destination toolchain ABI: VERIFIED soft-float EABI5 ARM 32-bit LE
-  (evidence: pi_saved/openipc_sensor_check/usr/lib/sensors/libsns_cv2003.so,
-  readelf -h shows Flags: 0x5000200, Version5 EABI, soft-float ABI).
-- ISP digital-gain policy: VERIFIED — destination majestic binary confirms
-  sensor dgain is pinned at 1x and ISP supplements via isp.aGain.
-  (evidence: analysis/cv2005_destination_abi_20261118_224107_168420/rootfs/usr/bin/majestic,
-  strings output confirms "no separate digital gain to hold, so it is pinned at 1x")
-- ISP defaults, black-level scaling, and board MIPI settings validity
-  for the destination board.
-- Runtime confirmation that this initialization path is selected for
-  the active CV2005 sensor.
+- Runtime confirmation that the implemented initialization path is selected
+  for the active CV2005 sensor.
+- Runtime exposure, gain, frame-length, and FPS behavior.
+- Destination-board MIPI PHY and ISP acceptance of the stock-derived
+  configuration.
+- ISP defaults, black-level scaling, and calibration transfer validity.
+- Camera load, streaming, image-quality, and long-run stability validation.
 
-=== BUILD BLOCKER ===
+=== BUILD STATUS ===
 
-- Makefile still contains $(error ...) to prevent accidental builds.
-- No compile, package, flash, or camera test has occurred.
+- Makefile blocker removed in dbace77.
+- Local MSYS2 UCRT64 host build is not a target build; it failed on the
+  Linux-only sys/ioctl.h include when invoked with host cc.
+- The preserved GitHub Actions musl-linked build is the current verified
+  build baseline.
+- No package, flash, or camera test has occurred.
 
 === IDENTITY-ONLY EDIT COMPLETED ===
 
