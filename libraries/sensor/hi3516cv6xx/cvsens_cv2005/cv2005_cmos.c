@@ -60,7 +60,7 @@ static cis_info g_cv2005_info[OT_ISP_MAX_PIPE_NUM] = {
  * at 1x and ISP supplements via isp.aGain. Destination ABI VERIFIED:
  * soft-float EABI5 (see research notes). No hardware validation is implied.
  */
-#define CV2005_SNS_REGS 9
+#define CV2005_SNS_REGS 8
 #define CV2005_INT_TIME_MAX 0xffffff
 
 static td_u32 cv2005_again_of(td_u32 index)
@@ -94,7 +94,6 @@ enum {
     CV2005_REG_DGAIN_H,
     CV2005_REG_VMAX_L,
     CV2005_REG_VMAX_M,
-    CV2005_REG_VMAX_H,
 };
 
 /****************************************************************************
@@ -198,7 +197,6 @@ static td_void cmos_config_vmax(ot_isp_sns_state *st, td_u32 vmax)
 {
     st->regs_info[0].i2c_data[CV2005_REG_VMAX_L].data = low_8bits(vmax);
     st->regs_info[0].i2c_data[CV2005_REG_VMAX_M].data = high_8bits(vmax);
-    st->regs_info[0].i2c_data[CV2005_REG_VMAX_H].data = (vmax >> 16) & 0xf;
 }
 
 
@@ -651,7 +649,7 @@ static td_void cmos_comm_sns_reg_info_init(cis_info *cis, ot_isp_sns_state *st)
     static const td_u16 reg_addr[CV2005_SNS_REGS] = {
         CV2005_EXPO_L_ADDR, CV2005_EXPO_M_ADDR, CV2005_EXPO_H_ADDR, CV2005_AGAIN_ADDR,
         CV2005_DGAIN_L_ADDR, CV2005_DGAIN_H_ADDR,
-        CV2005_VMAX_L_ADDR, CV2005_VMAX_M_ADDR, CV2005_VMAX_H_ADDR
+        CV2005_VMAX_L_ADDR, CV2005_VMAX_M_ADDR
     };
     td_u32 i;
     st->regs_info[0].sns_type = OT_ISP_SNS_TYPE_I2C;
@@ -675,7 +673,9 @@ static td_void cmos_sns_reg_info_update(ot_vi_pipe pipe, ot_isp_sns_state *st)
     td_u32 i;
     ot_unused(pipe);
     for (i = 0; i < CV2005_SNS_REGS; ++i) {
-        st->regs_info[0].i2c_data[i].update = TD_TRUE;
+        st->regs_info[0].i2c_data[i].update =
+            (st->regs_info[0].i2c_data[i].data !=
+             st->regs_info[1].i2c_data[i].data) ? TD_TRUE : TD_FALSE;
     }
 }
 

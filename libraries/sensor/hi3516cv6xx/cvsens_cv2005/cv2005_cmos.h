@@ -34,9 +34,8 @@ extern "C" {
 #define CV2005_AGAIN_ADDR     0x3118 /* Recovered stock analog code->gain mapping matches integer formula */
 #define CV2005_DGAIN_L_ADDR   0x311c /* Recovered stock digital code low byte; analog-region value 0x40 */
 #define CV2005_DGAIN_H_ADDR   0x311d /* Recovered stock digital code high byte; analog-region value 0x00 */
-#define CV2005_VMAX_L_ADDR    0x301c /* CV2005 upstream VMAX: low, middle, high nibble */
-#define CV2005_VMAX_M_ADDR    0x301d
-#define CV2005_VMAX_H_ADDR    0x301e
+#define CV2005_VMAX_L_ADDR    0x301c /* Stock 16-bit VMAX: low byte */
+#define CV2005_VMAX_M_ADDR    0x301d /* Stock 16-bit VMAX: high byte */
 
 /****************************************************************************
  * i2c bus config                                                           *

@@ -68,10 +68,11 @@ MIPI transfer, ISP compatibility, calibration transfer, or camera operation.
 === CURRENT PORTED / STOCK-VERIFIED STATE ===
 
 - Register addresses: exposure 0x3048-0x304A, analog gain 0x3118,
-  digital gain 0x311C-0x311D, frame length 0x301C-0x301E.
-- Nine-register sync payload: exposure 3, analog gain 1, digital gain 2,
-  VMAX 3.
+  digital gain 0x311C-0x311D, frame length 0x301C-0x301D.
+- Eight-register sync payload: exposure 3, analog gain 1, digital gain 2,
+  VMAX 2.
 - Exposure high-byte packing: shs >> 16.
+- Sync updates mark only registers whose current data differs from the previous snapshot.
 - Nominal frame length: 1180 lines at 30 fps.
 - Development frame-length cap: 14160 lines; provisional, stock-derived,
   not board-validated.
