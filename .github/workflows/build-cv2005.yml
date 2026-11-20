@@ -1,37 +1,141 @@
 name: Build CV2005 sensor library
-
 on:
   push:
     branches: [master]
     paths:
-      - 'libraries/sensor/hi3516cv6xx/cvsens_cv2005/**'
+      - 'libraries/sensor/hi3516cv6xx/**'
+      - 'libraries/isp/include/hi3516cv6xx/**'
+      - 'kernel/include/hi3516cv6xx/**'
       - '.github/workflows/build-cv2005.yml'
   workflow_dispatch:
-
+    inputs:
+      toolchain_sha256:
+        description: 'Expected SDK SHA256; blank records an unpinned download'
+        required: false
+        type: string
+permissions:
+  contents: read
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      SENSOR_DIR: libraries/sensor/hi3516cv6xx/cvsens_cv2005
+      TOOLCHAIN_URL: https://github.com/OpenIPC/firmware/releases/download/toolchain/toolchain.hisilicon-hi3516cv100.tgz
+      CROSS_COMPILE: arm-openipc-linux-musleabi-
+      EXPECTED_SHA256: ${{ inputs.toolchain_sha256 || '' }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install ARM Linux cross-compiler (soft-float)
+        with:
+          persist-credentials: false
+      - name: Record provenance
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-arm-linux-gnueabi
-
-      - name: Build CV2005 sensor library
-        working-directory: libraries/sensor/hi3516cv6xx/cvsens_cv2005
-        env:
-          CC: arm-linux-gnueabi-gcc
-          AR: arm-linux-gnueabi-ar
+          set -euo pipefail
+          mkdir -p evidence artifacts
+          {
+            git rev-parse HEAD
+            echo "Repository: $GITHUB_REPOSITORY"
+            echo "Run: $GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT"
+            echo "Toolchain: $TOOLCHAIN_URL"
+            echo 'Compile/link and static checks only; no deployment or hardware validation.'
+          } | tee evidence/provenance.txt
+      - name: Download and inspect musl SDK
         run: |
-          make clean
-          make
-
-      - name: Upload build artifacts
+          set -euo pipefail
+          exec > >(tee evidence/toolchain.log) 2>&1
+          ARCHIVE="$RUNNER_TEMP/toolchain.tgz"
+          SDK="$RUNNER_TEMP/arm-openipc-linux-musleabi_sdk-buildroot"
+          curl -fL --retry 3 --connect-timeout 30 --max-time 300 "$TOOLCHAIN_URL" -o "$ARCHIVE"
+          ACTUAL=$(sha256sum "$ARCHIVE" | awk '{print $1}')
+          echo "$ACTUAL  toolchain.tgz" | tee evidence/toolchain.sha256
+          if [[ -n "$EXPECTED_SHA256" ]]; then
+            [[ "$EXPECTED_SHA256" =~ ^[[:xdigit:]]{64}$ ]]
+            [[ "${ACTUAL,,}" == "${EXPECTED_SHA256,,}" ]]
+          else
+            echo '::warning::SDK hash recorded but not pinned to a trusted expected value.'
+          fi
+          tar -xzf "$ARCHIVE" -C "$RUNNER_TEMP"
+          test -d "$SDK"
+          if [[ -f "$SDK/relocate-sdk.sh" ]]; then
+            (cd "$SDK" && bash ./relocate-sdk.sh)
+          fi
+          export PATH="$SDK/bin:$PATH"
+          echo "$SDK/bin" >> "$GITHUB_PATH"
+          CC="${CROSS_COMPILE}gcc"
+          command -v "$CC"
+          "$CC" --version
+          "$CC" -dumpmachine
+          "$CC" -print-sysroot
+          case "$("$CC" -dumpmachine)" in
+            arm*musleabi*) ;;
+            *) echo '::error::Unexpected compiler target'; exit 1 ;;
+          esac
+          { "$CC" -v; "$CC" -Q --help=target; } > evidence/compiler-configuration.txt 2>&1
+      - name: Cross-build
+        run: |
+          set -euo pipefail
+          {
+            make -C "$SENSOR_DIR" CC="${CROSS_COMPILE}gcc" AR="${CROSS_COMPILE}ar" clean
+            make -C "$SENSOR_DIR" CC="${CROSS_COMPILE}gcc" AR="${CROSS_COMPILE}ar" -j2
+          } 2>&1 | tee evidence/build.log
+          test -s "$SENSOR_DIR/libsns_cv2005.so"
+          test -s "$SENSOR_DIR/libsns_cv2005.a"
+          cp "$SENSOR_DIR/libsns_cv2005.so" "$SENSOR_DIR/libsns_cv2005.a" artifacts/
+      - name: Inspect and validate output
+        run: |
+          set -euo pipefail
+          R="${CROSS_COMPILE}readelf"
+          SO=artifacts/libsns_cv2005.so
+          sha256sum artifacts/* | tee evidence/artifacts.sha256
+          file artifacts/* | tee evidence/file-types.txt
+          "$R" -h "$SO" > evidence/elf-header.txt
+          "$R" -A "$SO" > evidence/arm-attributes.txt
+          "$R" -d "$SO" > evidence/dynamic-section.txt
+          "$R" -V "$SO" > evidence/symbol-versions.txt
+          "$R" --dyn-syms --wide "$SO" > evidence/dynamic-symbols.txt
+          awk '$7 == "UND" {print}' evidence/dynamic-symbols.txt > evidence/undefined-symbols.txt
+          "$R" -h artifacts/libsns_cv2005.a > evidence/archive-elf-headers.txt
+          "${CROSS_COMPILE}ar" t artifacts/libsns_cv2005.a > evidence/archive-members.txt
+          cat evidence/elf-header.txt evidence/arm-attributes.txt evidence/dynamic-section.txt evidence/symbol-versions.txt
+          grep -Eq 'Class:[[:space:]]+ELF32' evidence/elf-header.txt
+          grep -Eq 'Machine:[[:space:]]+ARM' evidence/elf-header.txt
+          grep -q 'little endian' evidence/elf-header.txt
+          grep -q 'soft-float ABI' evidence/elf-header.txt
+          if grep -Eq '\[(libc\.so\.6|ld-linux[^]]*)\]' evidence/dynamic-section.txt; then
+            echo '::error::Unexpected glibc dependency'; exit 1
+          fi
+          if grep -q GLIBC_ evidence/symbol-versions.txt; then
+            echo '::error::Unexpected GLIBC version requirement'; exit 1
+          fi
+          grep -Eq '\(NEEDED\).*\[libc\.so\]' evidence/dynamic-section.txt
+          echo 'Static ARM/libc checks passed; runtime and SDK structure ABI remain unverified.' | tee evidence/validation.txt
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo '## CV2005 musl build'
+            echo "Source: $GITHUB_SHA"
+            echo "Run: $GITHUB_RUN_ID"
+            echo 'No installation, flash or hardware validation.'
+            if [[ -f evidence/toolchain.sha256 ]]; then cat evidence/toolchain.sha256; fi
+            if [[ -f evidence/validation.txt ]]; then cat evidence/validation.txt; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload evidence even on failure
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cv2005-build
-          path: |
-            libraries/sensor/hi3516cv6xx/cvsens_cv2005/libsns_cv2005.so
-            libraries/sensor/hi3516cv6xx/cvsens_cv2005/libsns_cv2005.a
+          name: cv2005-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Upload validated binaries
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cv2005-musl-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 90
