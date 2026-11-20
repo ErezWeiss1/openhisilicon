@@ -30,6 +30,134 @@ Scope: compile, link, and static ARM/libc checks only. This does not
 validate runtime initialization, gain or exposure behavior, MIPI transfer,
 ISP compatibility, calibration transfer, or camera operation.
 
+## First GitHub cross-build and libc mismatch (2026-11-20)
+
+<!-- CV2005_BUILD_LIBC_MISMATCH_20261120_RUN44789077830 -->
+
+GitHub Actions run 44789077830 completed successfully for source commit
+1b08be2a78789feb85da51fe49a8ddf69c10c3f3. Its workflow used
+arm-linux-gnueabi-gcc from the gcc-arm-linux-gnueabi package.
+
+Preserved artifacts:
+- libsns_cv2005.so SHA256 92df43c1496851a4d9fa5db03a45f32856d3275e0b9e0713b49dc37bac45deb8
+- libsns_cv2005.a SHA256 b61b7825007a05c4872f568baaa4f139be263d6ee3fc2210cd210513d854906b
+
+The shared library was ELF32 little-endian ARM, Version5 EABI, soft-float
+ABI. It required libc.so.6 and ld-linux.so.3, with GLIBC_2.4 and
+GLIBC_2.34 version requirements.
+
+The inspected destination majestic executable used PT_INTERP
+/lib/ld-musl-arm.so.1 and required libc.so, with no shown GLIBC version
+requirement. Matching ARM EABI float flags therefore did not establish
+runtime compatibility.
+
+Disposition: preserve the run-44789077830 artifacts as compile/link
+evidence only. They are not approved deployment candidates. Do not install
+or flash them based on build success alone.
+
+## Corrections to earlier conclusions (2026-11-20)
+
+ARM soft-float ELF flags alone do not fully verify destination-toolchain
+compatibility. A successful CI build does not establish deployment
+readiness, and static compatibility analysis is not exhausted.
+
+The earlier ISP digital-gain conclusion was overstated. Majestic strings
+alone do not establish that the relevant branch applies to CV2005, that
+sensor digital gain must remain at 1x, or that the stock digital-extension
+records should be disabled. isp.aGain must not be equated with ISP digital
+gain. Numerical table agreement, callback semantics, and actual runtime
+gain policy remain separate questions.
+
+## Stock-camera boot interruption verified (2026-11-20)
+
+<!-- BOOT_INTERRUPT_H_VERIFIED_20261120 -->
+
+A live stock-camera UART session successfully interrupted autoboot by
+sending uppercase H (0x48) every 20 ms while the camera powered on.
+
+Observed interruption:
+
+```text
+Hit any key to stop autoboot:  0
+# HHHHHHHHHH...
+```
+
+This confirms uppercase H for this camera and session. It does not prove
+that H is the only accepted key, and Ctrl+H remains unverified.
+
+The interrupt script is not an interactive terminal. After stopping it,
+reconnect with:
+
+```bash
+sudo picocom -b 115200 --flow n /dev/serial0
+```
+
+Clear any residual H characters from the camera input line before issuing
+commands. Do not rerun the repeater against an already interrupted prompt.
+
+This establishes live UART boot interruption only. It does not establish
+Linux shell access, CV2005 driver compilation, deployment, flashing,
+sensor validation, or resolved initialization/ABI.
+
+## Stock bootloader live inspection (2026-11-20)
+
+<!-- STOCK_BOOTLOADER_VERIFIED_20261120 -->
+
+Live U-Boot inspection commands were: version, help, printenv, bdinfo,
+help bootm, help env, help getinfo, getinfo bootmode, getinfo spi, and
+getinfo version.
+
+Identified bootloader and build toolchain:
+
+```text
+U-Boot 2022.07 (Dec 17 2025 - 15:43:33 +0800)hi3516cv608-debug
+arm-v01c02-linux-musleabi-gcc
+(musl-1.2.3 linux-5.10 CS71.2.10.5.B002 2025-03-05 12:00:00) 10.3.0
+GNU ld (GNU Binutils) 2.41
+```
+
+This identifies the bootloader build toolchain. It does not independently
+establish the float ABI of stock userspace, the sensor module, the H44
+executable, or the OpenIPC destination.
+
+Key environment:
+
+```text
+arch=arm
+board=hi3516cv608
+bootargs=mem=40M earlycon=pl011,0x11040000 console=ttyAMA0,115200 clk_ignore_unused initcall_debug root=/dev/mtdblock2 rootfstype=squashfs mtdparts=sfc:192K(uboot),2560K(kernel),4992K(appfs),384K(config),64K(data)
+bootcmd=bootupdate 3;sf probe 0;sf read 0x41000000 0x30000 0x280000;bootm 0x41000000
+bootdelay=1
+cpu=armv7
+product=P23H
+soc=hi3516cv608
+```
+
+The configured bootcmd invokes bootupdate 3 before SPI probe, read, and
+boot. Its implementation and exact behavior have not been audited. Do not
+invoke boot or run bootcmd merely for inspection.
+
+Board information reported 64 MiB physical DRAM, while the kernel bootargs
+specify mem=40M. Leave bootargs unchanged. Zero flash fields in bdinfo do
+not mean that SPI flash is absent.
+
+Boot medium and flash:
+
+```text
+getinfo bootmode: spi
+getinfo spi: Block:64KB Chip:8MB*1 ID:0x68 0x40 0x17 Name:"BY25Q64ES"
+getinfo version: U-Boot 2022.07
+```
+
+The displayed help lists bootm, env, getinfo, and other commands. The
+env help output does not list a save subcommand, and no saveenv command
+appears in the displayed top-level help. Do not infer persistent
+environment-save support from the initial "Loading Environment from
+<NULL>... OK" message.
+
+Only inspection and help commands were executed. No environment changes,
+manual memory writes, flash writes, or custom-driver boots occurred.
+
 ## ABI verified: soft-float EABI5 (2026-11-20)
 
 Evidence: pi_saved/openipc_sensor_check/usr/lib/sensors/libsns_cv2003.so
@@ -38,62 +166,49 @@ Output: Flags: 0x5000200, Version5 EABI, soft-float ABI
 Machine: ARM, 32-bit, little-endian
 Type: DYN (shared object), dynamically linked, stripped
 
-Conclusion: The OpenIPC Hi3516CV6xx destination toolchain produces
-soft-float EABI5 ARM 32-bit little-endian binaries. This is primary
-evidence from a .so that ran on the actual target, not an inference
-from H44. CV2005 driver must be compiled with -mfloat-abi=soft
-(or equivalent) to link correctly.
+Conclusion: The inspected OpenIPC sensor library is soft-float EABI5 ARM
+32-bit little-endian. This supports use of -mfloat-abi=soft or an
+equivalent ABI-compatible toolchain configuration, subject to runtime and
+SDK compatibility validation.
 
-Status: VERIFIED — supersedes earlier "destination ABI unverified" note.
+Status: VERIFIED FOR THE INSPECTED LIBRARY; destination-runtime and
+CV2005 SDK compatibility remain unverified.
 
-## ISP digital-gain policy verified (2026-11-20)
+## ISP digital-gain policy (2026-11-20)
 
 Evidence: analysis/cv2005_destination_abi_20261118_224107_168420/rootfs/usr/bin/majestic
 Command: strings majestic | grep -i "dgain\|digital.gain\|isp.dgain\|sensor.dgain"
-Key strings:
-- "isp.dGain cannot be set while isp.aeMode is manual: this sensor has
-  no separate digital gain to hold, so it is pinned at 1x. Use
-  isp.aGain, which does reach it"
-- "Highest sensor digital gain... Unlike the other two gains this one is a
-  ceiling and never a value. These sensors carry a single combined
-  gain register, so there is no separate digital gain to hold at a figure...
-  Use the analog gain when the exposure mode is manual."
 
-Conclusion: The destination ISP (majestic) expects sensor digital gain
-to be pinned at 1x and supplements via ISP gain (isp.aGain). The 224
-digital-extension records in the stock table are NOT used by the
-destination ISP path. The current cv2005_cmos.c approach (sensor dgain
-fixed at 1x, ISP supplements) is correct for the destination.
+Majestic strings indicate that, for sensors without a separate digital-gain
+control, sensor digital gain is pinned at 1x and ISP gain supplements it.
+These strings alone do not establish CV2005-specific runtime behavior,
+whether the relevant code path applies to CV2005, or whether stock
+digital-extension records should be disabled.
 
-Status: VERIFIED — supersedes earlier "ISP digital-gain policy
-unvalidated" note in cv2005_cmos.c.
+Status: LEAD, NOT CV2005-RUNTIME-VERIFIED. Preserve the distinction
+between ISP analog gain, ISP digital gain, and sensor digital gain.
 
-## 1024-unity scaling, MIPI/ISP defaults, build blocker (2026-11-20)
+## 1024-unity scaling, MIPI/ISP defaults (2026-11-20)
 
-### 1024-unity scaling — VERIFIED
-Evidence: stock_analog_gain_249.csv (249 records, zero mismatches against
-(256*1024)/(256-code)); majestic binary confirms ISP supplements beyond
-sensor analog max.
-Conclusion: 1/1024 is the correct unity for the combined gain register,
-validated by stock table, not merely an interpretation.
-Status: VERIFIED — supersedes "1024-unity scaling is an interpretation"
-in cv2005_cmos.c.
+### 1024-unity scaling — stock-table supported
+Evidence: stock_analog_gain_249.csv; 249 records match
+(256*1024)/(256-code) with zero mismatches.
+Conclusion: 1/1024 is supported as the unity scale for the recovered
+combined-gain table. Runtime ISP gain policy remains separate.
+Status: STOCK-TABLE SUPPORTED; runtime policy unverified.
 
 ### MIPI/ISP defaults — stock-verified, board-transfer pending
-Evidence: stock boot log (ran on destination) confirmed 465 Mbps MIPI
-and successful init; cv2005_cfg.h carries the 30-pair stock init table;
-cv2005_stock_isp_tables.h carries stock ISP tables.
-Conclusion: MIPI rate and ISP defaults are stock-verified for the
-destination. Board-behavior transfer (whether destination MIPI PHY/ISP
-accepts these at runtime) requires build + hardware test; cannot be
-resolved by more static analysis.
-Status: STOCK-VERIFIED, HARDWARE-TRANSFER PENDING.
+Evidence: stock boot log reported 465 Mbps MIPI and successful CV2005
+initialization; cv2005_cfg.h carries the stock-derived initialization
+table; cv2005_stock_isp_tables.h carries recovered ISP tables.
+Conclusion: MIPI rate and ISP defaults are stock-derived, but destination
+board behavior requires runtime validation.
+Status: STOCK-DERIVED, HARDWARE-TRANSFER PENDING.
 
 ### Build blocker — removed
-Evidence: ABI verified (soft-float EABI5), ISP digital-gain policy
-verified (majestic), stock init table + ISP tables committed, and GitHub
-Actions run 44792107411 successfully built the current CV2005 source.
-Conclusion: The $(error ...) blocker was removed in dbace77 to enable
-the build attempt. The preserved musl-linked build is the current build
-baseline; runtime and hardware validation remain pending.
+Evidence: ABI evidence, stock init/ISP tables, and successful GitHub
+Actions run 44792107411.
+Conclusion: The $(error ...) blocker was removed in dbace77. The preserved
+musl-linked build is the current build baseline; runtime and hardware
+validation remain pending.
 Status: REMOVED — build attempt enabled; no hardware validation claimed.
