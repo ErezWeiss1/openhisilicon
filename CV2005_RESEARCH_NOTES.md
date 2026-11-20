@@ -289,3 +289,69 @@ calibration transfer, or camera operation.
 
 Status: VERIFIED — CALLBACK-REGISTRATION ABI; individual callback
 semantics remain unverified.
+
+## CV2005 stock eight-register SHS reconciliation applied (2026-11-20)
+
+<!-- CV2005_STOCK_EIGHT_REGISTER_SHS_RECONCILIATION_20261120 -->
+
+Evidence: cv2005_recovered_code.txt, stock CV2005 register-info callback
+at 0x44d01c; local patched ot driver cv2005_cmos.c and cv2005_cmos.h.
+
+The stock CV2005 register-info callback establishes:
+
+```text
+reg_num = 8
+cfg2_valid_delay_max = 2
+delay_frame_num = 2
+```
+
+Its queued-register payload is:
+
+```text
+0x3048 exposure low
+0x3049 exposure middle
+0x304A exposure high
+0x3118 analog gain
+0x311D digital gain high
+0x311C digital gain low
+0x301C frame length low
+0x301D frame length high
+```
+
+There is no 0x301E register in the stock payload. Stock VMAX is therefore
+a two-register, 16-bit frame-length value.
+
+The stock callback compares each current value with the previous-frame
+value and marks only changed registers as updated. It does not mark all
+eight registers updated on every call.
+
+The stock exposure path uses shutter-start semantics:
+
+```text
+SHS = frame_length - integration_time
+```
+
+The active ot CV2005 driver has been reconciled to this model:
+
+```text
+CV2005_SNS_REGS = 8
+VMAX registers = 0x301C, 0x301D
+0x301E removed from the payload
+20-bit VMAX high-nibble write removed
+SHS exposure conversion retained
+Selective register update retained
+cfg2_valid_delay_max = 2
+delay_frame_num = 2
+```
+
+The prior nine-register/20-bit VMAX layout was upstream XMedia-specific,
+not stock CV2005 behavior. The prior stage-2 note's nine-register and
+0x301E statements are superseded for the active ot driver.
+
+Scope: this reconciles the register-info payload and exposure-update
+semantics to recovered stock evidence. It does not validate gain mapping,
+digital-gain policy, MIPI transfer, ISP calibration transfer, or hardware
+behavior.
+
+Status: APPLIED — STOCK EIGHT-REGISTER SHS RECONCILIATION; runtime and
+hardware validation remain pending.
