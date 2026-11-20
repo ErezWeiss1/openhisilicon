@@ -1,0 +1,23 @@
+CV2005 DEVELOPMENT SCAFFOLD — NOT A FUNCTIONAL DRIVER
+
+Copied from Hi3516CV6xx CV2003 at:
+443c5d5b1bcd5998f01c92871129e2125948685a
+
+Source files are still unchanged CV2003 code.
+Do not build, install, load, package, or flash this scaffold.
+
+Pending:
+- Rename files, symbols, sensor identity, and library output.
+- Replace CV2003 register addresses and control semantics.
+- Reconcile CV2005 exposure bounds and gain mapping.
+- Resolve initialization table population and startup ordering.
+- Verify destination toolchain, ABI, and digital-gain units.
+- Review ISP defaults, black-level scaling, and board MIPI settings.
+
+IDENTITY-ONLY EDIT COMPLETED:
+- Source filenames and cv2003/CV2003 identifiers renamed.
+- Software sensor ID changed to 2005; this is NOT a verified hardware chip ID.
+- Library name changed to libsns_cv2005.
+- Makefile intentionally blocked to prevent accidental builds.
+- All inherited register behavior, initialization and tuning remain UNPORTED.
+- Inherited comments are not evidence about CV2005.

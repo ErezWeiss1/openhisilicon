@@ -1,0 +1,8 @@
+MOD_NAME := sys_config
+OUT := $(PREFIX)$(MOD_NAME)
+
+DIR=$(MOD_NAME)
+
+$(OUT)-objs := $(DIR)/$(MOD_NAME).o
+
+obj-m += $(OUT).o

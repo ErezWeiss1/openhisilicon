@@ -1,0 +1,1641 @@
+name: build
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  toolchain:
+    name: Build SDK
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: hi3516ev200
+            board: hi3516ev200_lite
+          - platform: gk7205v200
+            board: gk7205v200_lite
+          - platform: hi3516cv500
+            board: hi3516cv500_lite
+          - platform: hi3516cv200
+            board: hi3516cv200_lite
+          - platform: hi3516cv300
+            board: hi3516cv300_lite
+          - platform: hi3516cv100
+            board: hi3516cv100_lite
+          - platform: hi3516av100
+            board: hi3516av100_lite
+          - platform: hi3519v101
+            board: hi3519v101_lite
+          - platform: hi3519dv500
+            board: hi3519dv500_ultimate
+          # The cv6xx kernel has CONFIG_CMA=y: open_mmz must link against
+          # what it exports (openhisilicon#275), so modpost's "undefined!"
+          # fails this row.
+          - platform: hi3516cv6xx
+            board: hi3516cv6xx_ultimate
+            strict_symbols: true
+            qemu_machine: hi3516cv610
+          # Kernel modules only: firmware's hisilicon-opensdk does not build
+          # this family yet, so the kernel comes from firmware and kernel/ is
+          # built against it directly.
+          - platform: hi3536dv100
+            board: hi3536dv100_lite
+            kmod_only: true
+          - platform: hi3516ev300
+            board: hi3516ev300_neo
+            kernel: "7.0"
+          - platform: hi3516cv500
+            board: hi3516av300_neo
+            kernel: "7.0"
+          - platform: hi3516cv300
+            board: hi3516cv300_neo
+            kernel: "7.0"
+          - platform: hi3519v101
+            board: hi3516av200_neo
+            kernel: "7.0"
+          - platform: hi3516cv200
+            board: hi3516cv200_neo
+            kernel: "7.0"
+          - platform: hi3516av100
+            board: hi3516av100_neo
+            kernel: "7.0"
+          - platform: hi3516cv100
+            board: hi3516cv100_neo
+            kernel: "7.0"
+
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Clone firmware
+        run: git clone --depth 1 https://github.com/openipc/firmware ../firmware
+
+      - name: Setup neo target (EV300, 7.0 kernel)
+        if: matrix.kernel == '7.0' && matrix.platform == 'hi3516ev300'
+        run: |
+          cd ../firmware
+          BRANCH="upstream-patches"
+
+          # Use the upstream-patches branch (7.0-rc6 base + BVT patches)
+          if [ ! -f br-ext-chip-hisilicon/configs/hi3516ev300_neo_defconfig ]; then
+            cp br-ext-chip-hisilicon/configs/hi3516ev300_lite_defconfig \
+               br-ext-chip-hisilicon/configs/hi3516ev300_neo_defconfig
+          fi
+
+          # Point to upstream-patches kernel
+          sed -i "s|BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION=.*|BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION=\"https://github.com/openipc/linux/archive/${BRANCH}.tar.gz\"|" \
+             br-ext-chip-hisilicon/configs/hi3516ev300_neo_defconfig
+          sed -i 's|BR2_LINUX_KERNEL_UIMAGE=y|BR2_LINUX_KERNEL_IMAGE_TARGET_CUSTOM=y\nBR2_LINUX_KERNEL_IMAGE_TARGET_NAME="zImage"|' \
+             br-ext-chip-hisilicon/configs/hi3516ev300_neo_defconfig
+          sed -i 's|VARIANT="lite"|VARIANT="neo"|' \
+             br-ext-chip-hisilicon/configs/hi3516ev300_neo_defconfig
+          echo 'BR2_GLOBAL_PATCH_DIR="$(BR2_EXTERNAL)/package/all-patches-neo"' >> \
+             br-ext-chip-hisilicon/configs/hi3516ev300_neo_defconfig
+
+          # Kernel config
+          cp br-ext-chip-hisilicon/board/hi3516ev200/hi3516ev300.generic.config \
+             br-ext-chip-hisilicon/board/hi3516ev200/hi3516ev300.neo.config
+          printf '%s\n' \
+            '# CONFIG_DEBUG_KERNEL is not set' \
+            'CONFIG_CMDLINE="earlycon=pl011,0x12040000"' \
+            'CONFIG_CMDLINE_EXTEND=y' \
+            >> br-ext-chip-hisilicon/board/hi3516ev200/hi3516ev300.neo.config
+          sed -i 's|hi3516ev300.generic.config|hi3516ev300.neo.config|' \
+             br-ext-chip-hisilicon/configs/hi3516ev300_neo_defconfig
+
+          # Neo patches dir
+          mkdir -p general/package/all-patches-neo/linux
+          for d in general/package/all-patches/*/; do
+            name=$(basename "$d")
+            [ "$name" != "linux" ] && ln -sf "../all-patches/$name" "general/package/all-patches-neo/$name"
+          done
+
+          sed -i 's|cat $(CONFIG) $(PWD)/general/openipc.fragment|cat $(PWD)/general/openipc.fragment $(CONFIG)|' Makefile
+
+      - name: Setup neo target (CV500, 7.0 kernel)
+        if: matrix.kernel == '7.0' && matrix.platform == 'hi3516cv500'
+        run: |
+          cd ../firmware
+
+          # Neo patches dir (may already exist from EV300 setup)
+          mkdir -p general/package/all-patches-neo/linux
+          for d in general/package/all-patches/*/; do
+            name=$(basename "$d")
+            [ "$name" != "linux" ] && [ ! -e "general/package/all-patches-neo/$name" ] && \
+              ln -sf "../all-patches/$name" "general/package/all-patches-neo/$name"
+          done
+
+          # The hi3516av300_neo_defconfig, neo kernel config, and neo-post-image.sh
+          # should already be in the firmware repo. If not, create minimal versions.
+          if [ ! -f br-ext-chip-hisilicon/configs/hi3516av300_neo_defconfig ]; then
+            echo "ERROR: hi3516av300_neo_defconfig not found in firmware repo" >&2
+            exit 1
+          fi
+
+          sed -i 's|cat $(CONFIG) $(PWD)/general/openipc.fragment|cat $(PWD)/general/openipc.fragment $(CONFIG)|' Makefile
+
+      # CV300 (V3, ARM926EJ-S) is the cleanest legacy platform — issue #60
+      # verified that zero blobs bypass OSAL for kernel APIs, so a kernel
+      # bump is just recompiling OSAL. The PDE_DATA() shim in
+      # kernel/compat/kernel_compat.h covers the one symbol OSAL touches
+      # that changed on 5.17. CV300 is also the only HiSi SoC with real
+      # mainline DT/SoC support upstream (arch/arm/boot/dts/hisilicon/
+      # hi3516cv300.dtsi) — a future neo build could ride pure mainline
+      # rather than the BVT vendor patches; this matrix entry uses the
+      # same upstream-patches branch as EV300/AV300 for now so the
+      # delta-from-working is minimal.
+      - name: Setup neo target (CV300, 7.0 kernel)
+        if: matrix.kernel == '7.0' && matrix.platform == 'hi3516cv300'
+        run: |
+          cd ../firmware
+
+          # Neo patches dir (may already exist from EV300/CV500 setup)
+          mkdir -p general/package/all-patches-neo/linux
+          for d in general/package/all-patches/*/; do
+            name=$(basename "$d")
+            [ "$name" != "linux" ] && [ ! -e "general/package/all-patches-neo/$name" ] && \
+              ln -sf "../all-patches/$name" "general/package/all-patches-neo/$name"
+          done
+
+          # Firmware-side dependency: hi3516cv300_neo_defconfig, neo kernel
+          # config, and (if upstream-patches lacks a CV300 DT) the
+          # all-patches-neo/linux DT drop-in must already be in firmware.
+          if [ ! -f br-ext-chip-hisilicon/configs/hi3516cv300_neo_defconfig ]; then
+            echo "ERROR: hi3516cv300_neo_defconfig not found in firmware repo" >&2
+            exit 1
+          fi
+
+          sed -i 's|cat $(CONFIG) $(PWD)/general/openipc.fragment|cat $(PWD)/general/openipc.fragment $(CONFIG)|' Makefile
+
+      # V3A (Hi3519V101 / Hi3516AV200 — same die, distinguished only by the
+      # SCSYSID0 sub-variant byte) — last HiSilicon family that lacked
+      # modern-kernel support. Targets the hi3516av200 SKU (most-deployed
+      # V3A and the canonical dev board variant); the openhisilicon side
+      # builds via OPENIPC_SOC_FAMILY=hi3519v101 which is shared with the
+      # v101 SKU. DT support landed in openipc/linux PR #47
+      # (arch/arm/boot/dts/hisilicon/hi3519v101.dtsi +
+      # hi3519v101-demb.dts). Firmware-side target is
+      # OpenIPC/firmware#2137 — hi3516av200_neo_defconfig +
+      # hi3516av200.neo.config + neo-post-image.sh.
+      - name: Setup neo target (V3A AV200, 7.0 kernel)
+        if: matrix.kernel == '7.0' && matrix.platform == 'hi3519v101'
+        run: |
+          cd ../firmware
+
+          # Neo patches dir (may already exist from earlier setup steps)
+          mkdir -p general/package/all-patches-neo/linux
+          for d in general/package/all-patches/*/; do
+            name=$(basename "$d")
+            [ "$name" != "linux" ] && [ ! -e "general/package/all-patches-neo/$name" ] && \
+              ln -sf "../all-patches/$name" "general/package/all-patches-neo/$name"
+          done
+
+          # Firmware-side dependency: hi3516av200_neo_defconfig + per-SKU
+          # kernel config + neo-post-image.sh — all landed in firmware#2137.
+          if [ ! -f br-ext-chip-hisilicon/configs/hi3516av200_neo_defconfig ]; then
+            echo "ERROR: hi3516av200_neo_defconfig not found in firmware repo" >&2
+            exit 1
+          fi
+
+          sed -i 's|cat $(CONFIG) $(PWD)/general/openipc.fragment|cat $(PWD)/general/openipc.fragment $(CONFIG)|' Makefile
+
+      # V2 (Hi3516CV200 / Hi3518EV200) neo — kernel 7.0 with the
+      # open_v2_shim module re-exporting symbols the 4.9-compiled blobs
+      # reference. Firmware-side target: OpenIPC/firmware#2122 +
+      # opensdk bump #2121.
+      - name: Setup neo target (V2 CV200, 7.0 kernel)
+        if: matrix.kernel == '7.0' && matrix.platform == 'hi3516cv200'
+        run: |
+          cd ../firmware
+          mkdir -p general/package/all-patches-neo/linux
+          for d in general/package/all-patches/*/; do
+            name=$(basename "$d")
+            [ "$name" != "linux" ] && [ ! -e "general/package/all-patches-neo/$name" ] && \
+              ln -sf "../all-patches/$name" "general/package/all-patches-neo/$name"
+          done
+          if [ ! -f br-ext-chip-hisilicon/configs/hi3516cv200_neo_defconfig ]; then
+            echo "ERROR: hi3516cv200_neo_defconfig not found in firmware repo" >&2
+            exit 1
+          fi
+          sed -i 's|cat $(CONFIG) $(PWD)/general/openipc.fragment|cat $(PWD)/general/openipc.fragment $(CONFIG)|' Makefile
+
+      # V2A (Hi3516AV100, Cortex-A7) neo — kernel 7.0. Same shape as cv200
+      # neo but using mainline hi3516av100 SoC support + hisi_higmac
+      # ethernet driver from openipc/linux PR #44. open_v2a_shim re-exports
+      # the av100-blob-required APIs. Firmware-side target:
+      # OpenIPC/firmware#2122 alongside cv200.
+      - name: Setup neo target (V2A AV100, 7.0 kernel)
+        if: matrix.kernel == '7.0' && matrix.platform == 'hi3516av100'
+        run: |
+          cd ../firmware
+          mkdir -p general/package/all-patches-neo/linux
+          for d in general/package/all-patches/*/; do
+            name=$(basename "$d")
+            [ "$name" != "linux" ] && [ ! -e "general/package/all-patches-neo/$name" ] && \
+              ln -sf "../all-patches/$name" "general/package/all-patches-neo/$name"
+          done
+          if [ ! -f br-ext-chip-hisilicon/configs/hi3516av100_neo_defconfig ]; then
+            echo "ERROR: hi3516av100_neo_defconfig not found in firmware repo" >&2
+            exit 1
+          fi
+          sed -i 's|cat $(CONFIG) $(PWD)/general/openipc.fragment|cat $(PWD)/general/openipc.fragment $(CONFIG)|' Makefile
+
+      # V1 (Hi3516CV100 / Hi3518EV200 / Hi3518CV100, ARM926EJ-S) neo —
+      # kernel 7.0 with open_v1_shim wrapping ~31 ARM926-era kernel APIs
+      # the V1 blobs reference. DT support from openipc/linux PR #46.
+      # Firmware-side target: OpenIPC/firmware#2131.
+      - name: Setup neo target (V1 CV100, 7.0 kernel)
+        if: matrix.kernel == '7.0' && matrix.platform == 'hi3516cv100'
+        run: |
+          cd ../firmware
+          mkdir -p general/package/all-patches-neo/linux
+          for d in general/package/all-patches/*/; do
+            name=$(basename "$d")
+            [ "$name" != "linux" ] && [ ! -e "general/package/all-patches-neo/$name" ] && \
+              ln -sf "../all-patches/$name" "general/package/all-patches-neo/$name"
+          done
+          if [ ! -f br-ext-chip-hisilicon/configs/hi3516cv100_neo_defconfig ]; then
+            echo "ERROR: hi3516cv100_neo_defconfig not found in firmware repo" >&2
+            exit 1
+          fi
+          sed -i 's|cat $(CONFIG) $(PWD)/general/openipc.fragment|cat $(PWD)/general/openipc.fragment $(CONFIG)|' Makefile
+
+      - name: Build OpenHisilicon
+        if: matrix.kmod_only != true
+        run: |
+          set -o pipefail
+          cd ../firmware
+          FILE=general/package/hisilicon-opensdk/hisilicon-opensdk.mk
+          sed -i "s|^HISILICON_OPENSDK_SITE =.*|HISILICON_OPENSDK_SITE_METHOD = local\nHISILICON_OPENSDK_SITE = $GITHUB_WORKSPACE|" ${FILE}
+          sed -i "s|^HISILICON_OPENSDK_VERSION =.*||" ${FILE}
+          CMAKE_POLICY_VERSION_MINIMUM=3.5 make BOARD=${{matrix.board}} br-hisilicon-opensdk 2>&1 | tee opensdk.log
+          # As for kmod_only below: modpost only warns about an import nothing
+          # exports, and the module then fails to load on the camera.
+          # open_uvc.ko is left out: load_hisilicon never loads it, and its
+          # uvc_recv_pack has no provider yet.
+          if [ "${{ matrix.strict_symbols }}" = true ] &&
+             grep 'undefined!' opensdk.log | grep -v '/open_uvc\.ko\]' > undefined.log; then
+            echo "FAIL: unresolved symbols in ${{ matrix.platform }} modules" >&2
+            cat undefined.log >&2
+            exit 1
+          fi
+
+      # modpost above proves every import has an exporter; this proves the
+      # modules load. The kernel and modules this row built are booted under
+      # qemu-hisilicon on the release rootfs, on both allocators, and open_mmz
+      # must load (openhisilicon#275).
+      # Unconditional: a cached qemu-system-arm still needs the libraries
+      # (libfdt, pixman, slirp, glib) at run time.
+      - name: Install QEMU deps
+        if: matrix.qemu_machine
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ninja-build meson pkg-config \
+            libglib2.0-dev libpixman-1-dev libfdt-dev zlib1g-dev libslirp-dev \
+            python3 python3-venv squashfs-tools
+
+      - name: Clone qemu-hisilicon
+        if: matrix.qemu_machine
+        run: |
+          git clone --depth 1 https://github.com/OpenIPC/qemu-hisilicon.git /tmp/qemu-hisilicon
+          echo "QEMU_SHA=$(git -C /tmp/qemu-hisilicon rev-parse HEAD)" >> $GITHUB_ENV
+
+      - name: Cache QEMU build
+        if: matrix.qemu_machine
+        id: cache-qemu
+        uses: actions/cache@v4
+        with:
+          path: /tmp/qemu-hisilicon/qemu-src/build/qemu-system-arm
+          key: qemu-hisilicon-${{ env.QEMU_SHA }}-ubuntu-latest
+
+      - name: Build QEMU (if cache miss)
+        if: matrix.qemu_machine && steps.cache-qemu.outputs.cache-hit != 'true'
+        run: |
+          cd /tmp/qemu-hisilicon
+          bash qemu/setup.sh
+
+      - name: Load the built modules under QEMU
+        if: matrix.qemu_machine
+        timeout-minutes: 12
+        run: |
+          FW=$PWD/../firmware/output
+          mkdir -p /tmp/openipc && cd /tmp/openipc
+          sh "$GITHUB_WORKSPACE/.github/fetch-firmware.sh" ${{ matrix.platform }} ultimate
+          MODS=$(ls -d $FW/per-package/hisilicon-opensdk/target/lib/modules/*/hisilicon)
+          for a in cma ot; do
+            bash "$GITHUB_WORKSPACE/.github/qemu-load-modules.sh" \
+              /tmp/qemu-hisilicon/qemu-src/build/qemu-system-arm ${{ matrix.qemu_machine }} \
+              $FW/build/linux-custom/arch/arm/boot/uImage \
+              rootfs.squashfs.${{ matrix.platform }} "$MODS" $a
+          done
+
+      - name: Upload QEMU load logs
+        if: always() && matrix.qemu_machine
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-load-${{ matrix.platform }}
+          path: /tmp/openipc/qemu-load-*.txt
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # A family whose firmware package does not exist yet still gets its
+      # modules built against the real board kernel. modpost reports an import
+      # nothing exports as "undefined!" but only warns for external modules
+      # (make still exits 0), so that is turned into a failure here.
+      - name: Build kernel modules (kernel-only family)
+        if: matrix.kmod_only == true
+        run: |
+          set -o pipefail
+          cd ../firmware
+          make BOARD=${{ matrix.board }} br-linux
+          KDIR=$(ls -d output/build/linux-custom)
+          # Per-package directories: after br-linux alone, the toolchain is
+          # in linux's own host dir; output/host/ is only assembled at the end
+          # of a full build.
+          CROSS=$(ls output/per-package/linux/host/bin/*-linux-*-gcc | head -1 | sed 's/gcc$//')
+          make ARCH=arm CROSS_COMPILE="$PWD/$CROSS" -C "$KDIR" \
+            M="$GITHUB_WORKSPACE/kernel" CHIPARCH=${{ matrix.platform }} modules 2>&1 | tee kmod.log
+          if grep -q 'undefined!' kmod.log; then
+            echo "FAIL: unresolved symbols in ${{ matrix.platform }} modules" >&2
+            grep 'undefined!' kmod.log >&2
+            exit 1
+          fi
+
+      - name: Verify hi3536dv100 modules
+        if: matrix.platform == 'hi3536dv100'
+        run: |
+          VERMAGIC=$(sed -n 's/.*UTS_RELEASE "\(.*\)"/\1/p' \
+            ../firmware/output/build/linux-custom/include/generated/utsrelease.h)
+          # Six built from SDK source, then the 21 closed MPP modules relinked
+          # from the SDK's .ko files.
+          for m in osal sys_config wdt hi_ir hi_cipher tlv_320aic31 \
+                   base sys vdec vfmw jpegd tde region vgs vpss vou hifb hdmi \
+                   venc chnl jpege aio ai ao aenc adec acodec; do
+            KO="$GITHUB_WORKSPACE/kernel/open_$m.ko"
+            if [ ! -f "$KO" ]; then
+              echo "FAIL: open_$m.ko not built" >&2
+              exit 1
+            fi
+            if ! modinfo -F vermagic "$KO" | grep -q "^$VERMAGIC "; then
+              echo "FAIL: open_$m.ko vermagic '$(modinfo -F vermagic "$KO")' is not for $VERMAGIC" >&2
+              exit 1
+            fi
+            echo "ok: open_$m.ko ($(stat -c%s "$KO") bytes)"
+          done
+
+          # Every closed MPP module imports from OSAL, so the build step's
+          # "undefined!" gate already catches a symbol they use going missing.
+          # This also holds the exports nothing in this tree uses, which a
+          # blob built elsewhere may still need:
+          # .github/expected/hi3536dv100-osal-exports.txt is what the SDK's
+          # own hi_osal.ko exports, name for name, in C collation (the runner's
+          # locale orders '_' differently from the one the list was made in).
+          NM="$(ls ../firmware/output/per-package/linux/host/bin/*-linux-*-gcc | head -1 | sed 's/gcc$//')nm"
+          "$NM" "$GITHUB_WORKSPACE/kernel/open_osal.ko" |
+            awk '$3 ~ /^__ksymtab_/ && $3 != "__ksymtab_strings" {sub("__ksymtab_", "", $3); print $3}' |
+            LC_ALL=C sort -u > osal-exports.txt
+          if ! diff -u "$GITHUB_WORKSPACE/.github/expected/hi3536dv100-osal-exports.txt" osal-exports.txt; then
+            echo "FAIL: open_osal.ko exports differ from the SDK's hi_osal.ko" >&2
+            exit 1
+          fi
+          echo "ok: open_osal.ko exports the SDK's $(wc -l < osal-exports.txt) symbols"
+
+          # The SDK's vdec refuses every frame on revision-2 chips unless its
+          # three chip-revision branches are made unconditional
+          # (scripts/hi3536dv100-vdec-revfix.sh); a vdec.o regenerated from
+          # the SDK without that step would load and silently never decode.
+          scripts/hi3536dv100-vdec-revfix.sh "${NM%nm}readelf" "$GITHUB_WORKSPACE/kernel/open_vdec.ko" --check
+
+      # ive_neo ships on platforms whose IVE block is reachable from this
+      # driver — currently V4 (hi3516ev200/gk7205v200, fused IVE+NEO) and
+      # CV500 (classic IVE only, XNN gated off). Catch silent regressions
+      # in either path: a missing `include ive_neo/Kbuild` in
+      # hi3516cv500.kbuild would skip the .ko without failing the build,
+      # and a chip-ops mis-selection would bake the wrong chip= log line.
+      # open_cipher.ko is built from a guard inside kernel/cipher/Kbuild
+      # (V4) or hi3516cv500.kbuild, so a broken guard skips the module
+      # WITHOUT failing the build — the same silent-skip shape the ive_neo
+      # check below exists for. And the batched command is the part that
+      # can regress invisibly: it is reached through a dispatch table
+      # indexed by command number, so a row added anywhere but the end
+      # binds every later command to the wrong handler and still links.
+      # Its name is a string literal in that table, which makes it a
+      # cheap thing to look for.
+      - name: Verify open_cipher built for this platform
+        if: matrix.platform == 'hi3516ev200' || matrix.platform == 'gk7205v200' || matrix.platform == 'hi3516cv500'
+        run: |
+          KO=$(find ../firmware/output -name open_cipher.ko 2>/dev/null | head -1)
+          if [ -z "$KO" ] || [ ! -f "$KO" ]; then
+              echo "FAIL: open_cipher.ko not built for ${{ matrix.platform }}" >&2
+              find ../firmware/output -name 'open_*.ko' 2>/dev/null | head -20 >&2 || true
+              exit 1
+          fi
+          echo "ok: $KO ($(stat -c%s "$KO") bytes)"
+
+          # The DT binding the module will actually match. Goke and
+          # HiSilicon spell it differently and the match table derives it
+          # from PLATFORM_NAME/HISI_PRX, so a compat.h regression shows up
+          # here as the wrong string rather than as a build error.
+          case "${{ matrix.platform }}" in
+              gk7205v200) EXPECT="goke,cipher" ;;
+              *)          EXPECT="hisilicon,hisi-cipher" ;;
+          esac
+          if ! strings "$KO" | grep -qx "$EXPECT"; then
+              echo "FAIL: $KO does not carry compatible '$EXPECT'" >&2
+              strings "$KO" | grep -E '^(goke|hisilicon),' >&2 || true
+              exit 1
+          fi
+          echo "ok: $KO matches '$EXPECT'"
+
+          if ! strings "$KO" | grep -qx "EncryptViaMulti"; then
+              echo "FAIL: $KO has no batched encrypt command — dispatch table regression?" >&2
+              exit 1
+          fi
+          echo "ok: $KO carries the batched encrypt command"
+
+      - name: Verify ive_neo built for this platform
+        if: matrix.platform == 'hi3516ev200' || matrix.platform == 'gk7205v200' || matrix.platform == 'hi3516cv500'
+        run: |
+          # Site_method=local plus a cleared _VERSION leaves the package
+          # build dir name unpredictable across buildroot versions
+          # (hisilicon-opensdk-, hisilicon-opensdk-custom, hisilicon-opensdk-<sha>,
+          # etc.). Just walk the whole output tree.
+          KO=$(find ../firmware/output -name open_ive_neo.ko 2>/dev/null | head -1)
+          if [ -z "$KO" ] || [ ! -f "$KO" ]; then
+              echo "FAIL: open_ive_neo.ko not built for ${{ matrix.platform }}" >&2
+              echo "--- candidate dirs under firmware/output/build ---" >&2
+              ls -1d ../firmware/output/build/hisilicon* 2>&1 || true
+              echo "--- any open_*.ko anywhere ---" >&2
+              find ../firmware/output -name 'open_*.ko' 2>/dev/null | head -20 >&2 || true
+              exit 1
+          fi
+          echo "ok: $KO ($(stat -c%s "$KO") bytes)"
+
+          # The chip-ops table in kernel/ive_neo/ive_neo.c bakes a
+          # platform-specific name into a printk format string. Grep
+          # it out of the .ko to confirm the right backend was
+          # compiled in. V4 family rolls up to "hi3516ev200" (the
+          # CHIPARCH for ev300/gk7205v200/etc.); cv500 has its own.
+          case "${{ matrix.platform }}" in
+              hi3516cv500) EXPECT=hi3516cv500 ;;
+              *)           EXPECT=hi3516ev200 ;;
+          esac
+          if ! strings "$KO" | grep -qF "chip=%s xnn=%s base=0x%x"; then
+              echo "FAIL: chip-ops log format not found in $KO — refactor regression?" >&2
+              exit 1
+          fi
+          if ! strings "$KO" | grep -qx "$EXPECT"; then
+              echo "FAIL: $KO missing chip-name '$EXPECT' — wrong backend selected" >&2
+              echo "--- chip strings in .ko ---" >&2
+              strings "$KO" | grep -E '^hi3516(ev200|cv500)$' >&2 || true
+              exit 1
+          fi
+          echo "ok: $KO has chip='$EXPECT' baked in"
+
+          # cv500 must NOT have the XNN dispatch active (no NEO unit
+          # on cv500's IVE — CNN lives on a separate NNIE block).
+          # The has_xnn=false branch DCEs the XNN handler bodies and
+          # their fatal-warning string. If that string sneaks into a
+          # cv500 build, XNN gating broke and the driver could go
+          # past -EOPNOTSUPP into a model-load path that has no
+          # hardware to back it.
+          if [ "${{ matrix.platform }}" = hi3516cv500 ]; then
+              if strings "$KO" | grep -qF "XNN loadmodel rejected on chip="; then
+                  echo "ok: cv500 build kept the XNN-reject guard"
+              fi
+              if strings "$KO" | grep -qF "FC layer using non-tiled hardcoded params"; then
+                  echo "FAIL: cv500 build contains XNN FC layer code — XNN gating regression" >&2
+                  exit 1
+              fi
+              echo "ok: cv500 build has no XNN dispatch code"
+
+              # PR #107: PerspTrans and Hog have real HW handlers on
+              # cv500. PR for #110: NCC handler is now wired (was a
+              # silent stub before). Each handler emits a distinctive
+              # log line; if those strings vanish, someone reverted to
+              # the silent-stub or diag path. Grep for the validation
+              # / one-time log rather than the handler symbol name so
+              # the assertion stays meaningful across renames.
+              for needle in "PerspTrans bad roi_num" "Hog bad roi_num" "NCC handler wired" "LBP handler wired" "CSC handler wired" "FilterAndCSC handler wired" "Resize handler wired" "LK handler wired" "EqualizeHist handler wired"; do
+                  if ! strings "$KO" | grep -qF "$needle"; then
+                      echo "FAIL: cv500 .ko missing '$needle' — handler regressed to stub?" >&2
+                      exit 1
+                  fi
+              done
+              echo "ok: cv500 build has PerspTrans + Hog + NCC + LBP + CSC + FilterAndCSC + Resize + LK + EqualizeHist HW handlers wired"
+
+              # The N-node chain submit helper is the shared HW kick
+              # path for both new ops. Its timeout log is the only
+              # string unique to it; absence means the dispatcher is
+              # going through some other (likely wrong) submit path.
+              if ! strings "$KO" | grep -qF "submit_chain: timeout"; then
+                  echo "FAIL: cv500 .ko missing ive_submit_chain — chain dispatch regression" >&2
+                  exit 1
+              fi
+              echo "ok: cv500 build has ive_submit_chain helper"
+          fi
+
+      # nnie_neo ships on cv500-family only (separate NNIE block at
+      # 0x11100000 — V4 has no NNIE). Same shape as the ive_neo check
+      # above: confirm the .ko built, that it carries the expected
+      # platform-driver match string, and that the load-bearing
+      # support functions (descriptor MMZ pre-alloc, IRQ handler) are
+      # present.
+      - name: Verify nnie_neo built for this platform
+        if: matrix.platform == 'hi3516cv500'
+        run: |
+          KO=$(find ../firmware/output -name open_nnie_neo.ko 2>/dev/null | head -1)
+          if [ -z "$KO" ] || [ ! -f "$KO" ]; then
+              echo "FAIL: open_nnie_neo.ko not built for ${{ matrix.platform }}" >&2
+              find ../firmware/output -name 'open_nnie*' 2>/dev/null >&2 || true
+              exit 1
+          fi
+          echo "ok: $KO ($(stat -c%s "$KO") bytes)"
+
+          # Platform-driver bind target must match the DT compatible.
+          if ! strings "$KO" | grep -qF "hisilicon,hisi-nnie"; then
+              echo "FAIL: $KO missing DT compatible 'hisilicon,hisi-nnie'" >&2
+              exit 1
+          fi
+          echo "ok: DT compatible wired"
+
+          # /dev/nnie miscdevice — caller-facing surface. Renaming this
+          # silently would break every userspace consumer.
+          if ! strings "$KO" | grep -qF "/dev/nnie ready"; then
+              echo "FAIL: $KO missing '/dev/nnie ready' init log" >&2
+              exit 1
+          fi
+          echo "ok: /dev/nnie miscdevice wired"
+
+          # Descriptor MMZ is pre-allocated at module init so its phys
+          # stays stable across Forwards. The hil_mmb_alloc name is
+          # baked in as the MMZ-zone label — losing it means the
+          # pre-alloc step was removed and we'd regress to per-Forward
+          # alloc (TASK_ADDR drift → HW cfg_err).
+          if ! strings "$KO" | grep -qx "nnie_desc"; then
+              echo "FAIL: $KO missing 'nnie_desc' MMZ label — descriptor pre-alloc regressed?" >&2
+              exit 1
+          fi
+          echo "ok: descriptor MMZ pre-alloc wired"
+
+          # Function names appear in the .ko's symbol string table, so
+          # `strings | grep -x` is enough — avoids needing
+          # arm-linux-gnueabi-nm, which isn't installed in this job.
+          for sym in nnie_irq_handler nnie_dispatch_forward; do
+              if ! strings "$KO" | grep -qx "$sym"; then
+                  echo "FAIL: $KO missing $sym symbol" >&2
+                  exit 1
+              fi
+              echo "ok: $sym present"
+          done
+
+  #
+  # libraries-header-check
+  #
+  # Host-only fast sanity check on the libraries/*_neo public headers.
+  # Catches header regressions on every push in <30 s without needing a
+  # cross-compiler. Static_asserts lock in the binary ABI struct sizes.
+  #
+  libraries-header-check:
+    name: Libraries header check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile public-header probe
+        run: |
+          cat > /tmp/probe.c <<'EOF'
+          #include "hi_type.h"
+          #include "hi_common.h"
+          #include "hi_comm_ive.h"
+          #include "hi_ive.h"
+          #include "hi_comm_video.h"
+          #include "hi_ivp.h"
+          #include "mpi_sys.h"
+          #include "mpi_ive.h"
+
+          /* Binary ABI is frozen against vendor libive.so / libmpi.so /
+           * libivp.so. A struct-size drift here means the ioctl arg
+           * layout or HI_MPI_IVE_Thresh ctrl buffer would stop matching
+           * the kernel — which is always a bug. */
+          _Static_assert(sizeof(IVE_IMAGE_S)             == 72,   "IVE_IMAGE_S size");
+          _Static_assert(sizeof(IVE_MEM_INFO_S)          == 24,   "IVE_MEM_INFO_S size");
+          _Static_assert(sizeof(IVE_DATA_S)              == 32,   "IVE_DATA_S size");
+          _Static_assert(sizeof(IVE_THRESH_CTRL_S)       == 12,   "IVE_THRESH_CTRL_S size");
+          _Static_assert(sizeof(IVE_SUB_CTRL_S)          == 4,    "IVE_SUB_CTRL_S size");
+          _Static_assert(sizeof(IVE_CCL_CTRL_S)          == 8,    "IVE_CCL_CTRL_S size");
+          _Static_assert(sizeof(IVE_DILATE_CTRL_S)       == 25,   "IVE_DILATE_CTRL_S size");
+          _Static_assert(sizeof(IVE_ERODE_CTRL_S)        == 25,   "IVE_ERODE_CTRL_S size");
+          _Static_assert(sizeof(IVE_CANNY_HYS_EDGE_CTRL_S) == 56, "IVE_CANNY_HYS_EDGE_CTRL_S size");
+          _Static_assert(sizeof(IVE_CCBLOB_S)            == 3052, "IVE_CCBLOB_S size");
+          _Static_assert(sizeof(IVE_CNN_MODEL_S)         == 232,  "IVE_CNN_MODEL_S size");
+          _Static_assert(sizeof(IVE_GMM2_CTRL_S)         == 28,   "IVE_GMM2_CTRL_S size");
+
+          /* cv500-only ops (PerspTrans + Hog). The userspace marshalling
+           * code in libraries/ive_neo/src/ive_ops.c packs these structs
+           * into 7264-byte / 4200-byte ioctl arg buffers at fixed offsets;
+           * a single byte of drift would corrupt the kernel's read. The
+           * IVE_BLOB_S size (used by Hog's astDst[] array, stride 48 in
+           * the kernel) is checked indirectly via the marshalling test
+           * below — assert it explicitly here so the symptom is caught
+           * at "make" time rather than as a runtime EFAULT. */
+          _Static_assert(sizeof(IVE_RECT_U32_S)          == 16,   "IVE_RECT_U32_S size");
+          _Static_assert(sizeof(IVE_PERSP_TRANS_CTRL_S)  == 12,   "IVE_PERSP_TRANS_CTRL_S size");
+          _Static_assert(sizeof(IVE_HOG_CTRL_S)          == 16,   "IVE_HOG_CTRL_S size");
+          _Static_assert(sizeof(IVE_BLOB_S)              == 48,   "IVE_BLOB_S size");
+
+          int main(void) { return 0; }
+          EOF
+
+          gcc -Wall -Wextra -Werror -fsyntax-only \
+              -I libraries/include \
+              -I libraries/ive_neo/include \
+              -I libraries/mpi_neo/include \
+              -I libraries/ivp_neo/include \
+              /tmp/probe.c
+          echo "all headers compile cleanly; ABI sizes locked"
+
+      - name: Compile NNIE public-header probe
+        run: |
+          cat > /tmp/probe_nnie.c <<'EOF'
+          #include <stddef.h>
+          #include "hi_type.h"
+          #include "hi_common.h"
+          #include "hi_comm_svp.h"
+          #include "hi_nnie.h"
+          #include "mpi_nnie.h"
+          #include "nnie_wk_format.h"
+
+          /* Binary ABI for the NNIE userspace ↔ kernel interface. The
+           * 1624-byte Forward ioctl arg buffer packs SVP_BLOB_S +
+           * SVP_NNIE_FORWARD_CTRL_S at fixed offsets; SVP_NNIE_MODEL_S
+           * is copy_from_user'd directly by the kernel and indexed by
+           * offsetof(stBase) + sizeof(SEG_S) — drift in either of those
+           * silently corrupts the kernel's read. */
+          _Static_assert(sizeof(SVP_BLOB_S)                       == 48,   "SVP_BLOB_S size");
+          _Static_assert(sizeof(SVP_NNIE_NODE_S)                  == 52,   "SVP_NNIE_NODE_S size");
+          _Static_assert(sizeof(SVP_NNIE_ROIPOOL_INFO_S)          == 104,  "SVP_NNIE_ROIPOOL_INFO_S size");
+          _Static_assert(sizeof(SVP_NNIE_SEG_S)                   == 1692, "SVP_NNIE_SEG_S size");
+          _Static_assert(sizeof(SVP_NNIE_MODEL_S)                 == 13992,"SVP_NNIE_MODEL_S size");
+          _Static_assert(sizeof(SVP_NNIE_FORWARD_CTRL_S)          == 64,   "SVP_NNIE_FORWARD_CTRL_S size");
+          _Static_assert(sizeof(SVP_NNIE_FORWARD_WITHBBOX_CTRL_S) == 72,   "SVP_NNIE_FORWARD_WITHBBOX_CTRL_S size");
+
+          /* The kernel's nnie_op_forward reads pstModel via copy_from_user
+           * and indexes ([+0x3690] = stBase, +12 + seg*1692 + 12/16 for
+           * astSeg[seg].u32InstOffset / u32InstLen). Lock those offsets
+           * here so a header refactor can't drift them silently. */
+          _Static_assert(offsetof(SVP_NNIE_MODEL_S, stBase)       == 13968, "MODEL_S.stBase offset");
+
+          int main(void) { return 0; }
+          EOF
+
+          gcc -Wall -Wextra -Werror -fsyntax-only \
+              -I libraries/include \
+              -I libraries/nnie_neo/include \
+              /tmp/probe_nnie.c
+          echo "NNIE ABI sizes locked"
+
+      - name: Run NNIE LoadModel sanity test
+        run: |
+          make -C libraries/nnie_neo/test test_loadmodel test_get_tskbuf_size
+          ./libraries/nnie_neo/test/test_loadmodel
+          ./libraries/nnie_neo/test/test_get_tskbuf_size
+
+  #
+  # libraries-cross-compile
+  #
+  # Cross-compiles libraries/{ive,mpi,ivp}_neo with the apt ARM EABI
+  # toolchain (not musl — just a smoke test that code links). Verifies
+  # the .so/.a outputs exist, asserts canonical symbols are exported,
+  # and confirms the shared objects depend only on libc/libpthread
+  # (no vendor blobs sneaking into NEEDED).
+  #
+  libraries-cross-compile:
+    name: Libraries cross-compile (ARM EABI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ARM EABI toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-linux-gnueabi libc6-dev-armel-cross binutils-arm-linux-gnueabi
+
+      - name: Cross-compile libraries/*_neo
+        run: |
+          make -C libraries/mpi_neo \
+            CC=arm-linux-gnueabi-gcc AR=arm-linux-gnueabi-ar
+          make -C libraries/ive_neo \
+            CC=arm-linux-gnueabi-gcc AR=arm-linux-gnueabi-ar
+          make -C libraries/ivp_neo \
+            CC=arm-linux-gnueabi-gcc AR=arm-linux-gnueabi-ar
+          make -C libraries/nnie_neo \
+            CC=arm-linux-gnueabi-gcc AR=arm-linux-gnueabi-ar
+
+      - name: Verify outputs exist
+        run: |
+          for f in \
+              libraries/mpi_neo/libmpi_neo.so libraries/mpi_neo/libmpi_neo.a \
+              libraries/ive_neo/libive_neo.so libraries/ive_neo/libive_neo.a \
+              libraries/ivp_neo/libivp_neo.so libraries/ivp_neo/libivp_neo.a \
+              libraries/nnie_neo/libnnie_neo.so libraries/nnie_neo/libnnie_neo.a; do
+              [ -f "$f" ] || { echo "MISSING: $f" >&2; exit 1; }
+              echo "ok: $f ($(stat -c%s $f) bytes)"
+          done
+
+      - name: Assert canonical symbols
+        run: |
+          check() { arm-linux-gnueabi-nm -D --defined-only "$1" | grep -qE " T $2\$" || { echo "MISSING symbol $2 in $1" >&2; exit 1; } ; echo "ok: $2 in $(basename $1)"; }
+          for sym in HI_MPI_SYS_Init HI_MPI_SYS_Exit HI_MPI_SYS_MmzAlloc HI_MPI_SYS_MmzFree HI_MPI_SYS_MmzFlushCache; do
+              check libraries/mpi_neo/libmpi_neo.so $sym
+          done
+          for sym in HI_MPI_IVE_Query HI_MPI_IVE_Thresh HI_MPI_IVE_CCL HI_MPI_IVE_SAD HI_MPI_IVE_Dilate HI_MPI_IVE_Erode HI_MPI_IVE_Sobel mpi_ive_xnn_loadmodel mpi_ive_xnn_forward_slice mp_ive_svp_alg_proc_init; do
+              check libraries/ive_neo/libive_neo.so $sym
+          done
+          # cv500-only ops added in PR #107. The previous stubs returned
+          # HI_ERR_IVE_NOT_SUPPORT directly; the marshalling versions in
+          # ive_ops.c pack the arg buffer and ioctl through to the kernel.
+          # If someone reverts to the stub or renames the symbol, this
+          # catches it.
+          for sym in HI_MPI_IVE_PerspTrans HI_MPI_IVE_Hog; do
+              check libraries/ive_neo/libive_neo.so $sym
+          done
+          # KCF tracker family — 10 stubs added per issue #109. Real
+          # impls land in follow-ups; this assertion is purely
+          # link-surface (symbols must exist) so callers compiled
+          # against cv500 SDK headers can load the library.
+          for sym in \
+              HI_MPI_IVE_KCF_GetMemSize HI_MPI_IVE_KCF_CreateObjList \
+              HI_MPI_IVE_KCF_DestroyObjList HI_MPI_IVE_KCF_CreateGaussPeak \
+              HI_MPI_IVE_KCF_CreateCosWin HI_MPI_IVE_KCF_GetTrainObj \
+              HI_MPI_IVE_KCF_Process HI_MPI_IVE_KCF_GetObjBbox \
+              HI_MPI_IVE_KCF_JudgeObjBboxTrackState HI_MPI_IVE_KCF_ObjUpdate; do
+              check libraries/ive_neo/libive_neo.so $sym
+          done
+          for sym in hi_ivp_init hi_ivp_deinit hi_ivp_process_ex hi_ivp_load_resource_from_memory hi_ivp_set_ctrl_attr; do
+              check libraries/ivp_neo/libivp_neo.so $sym
+          done
+          # NNIE — eight HI_MPI_SVP_NNIE_* entry points. LoadModel /
+          # UnloadModel / GetTskBufSize are pure-userspace; the other
+          # five ioctl through /dev/nnie.
+          for sym in \
+              HI_MPI_SVP_NNIE_LoadModel HI_MPI_SVP_NNIE_UnloadModel \
+              HI_MPI_SVP_NNIE_GetTskBufSize HI_MPI_SVP_NNIE_Forward \
+              HI_MPI_SVP_NNIE_ForwardWithBbox HI_MPI_SVP_NNIE_Query \
+              HI_MPI_SVP_NNIE_AddTskBuf HI_MPI_SVP_NNIE_RemoveTskBuf; do
+              check libraries/nnie_neo/libnnie_neo.so $sym
+          done
+
+      - name: Assert no vendor libs in NEEDED
+        run: |
+          for f in \
+              libraries/mpi_neo/libmpi_neo.so \
+              libraries/ive_neo/libive_neo.so \
+              libraries/ivp_neo/libivp_neo.so \
+              libraries/nnie_neo/libnnie_neo.so; do
+              echo "=== $(basename $f) NEEDED ==="
+              arm-linux-gnueabi-readelf -d "$f" | grep NEEDED
+              # Expect only libc and (for pthread) libpthread. Any NEEDED
+              # entry matching libive.so, libmpi.so, libivp.so, libsecurec.so
+              # or libVoiceEngine.so would mean a vendor blob snuck in.
+              if arm-linux-gnueabi-readelf -d "$f" | grep -E 'NEEDED.*lib(ive|mpi|ivp|secure|VoiceEngine|upvqe|dnvqe)\.so'; then
+                  echo "FAIL: vendor lib in NEEDED" >&2
+                  exit 1
+              fi
+          done
+
+  #
+  # samples-cross-compile
+  #
+  # Each sample/* directory has a tiny Makefile that builds a single
+  # user-space binary against include/openipc_frame_ts.h (uapi). The
+  # samples are CI-tested as an executable smoke test: if their
+  # Makefile or any header they include drifts, this job catches it
+  # before the binary ships in a release.
+  #
+  # Toolchain: stock Debian arm-linux-gnueabi (glibc) — same as the
+  # libraries-cross-compile job uses. Not musl because we don't need
+  # to match a specific firmware libc here; this is a build sanity
+  # check, not a deploy artifact.
+  #
+  samples-cross-compile:
+    name: Samples cross-compile (ARM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ARM toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-linux-gnueabi libc6-dev-armel-cross binutils-arm-linux-gnueabi
+
+      - name: Build each sample
+        run: |
+          set -e
+          for d in samples/*/; do
+              [ -f "$d/Makefile" ] || continue
+              echo "=== $d ==="
+              make -C "$d" CC=arm-linux-gnueabi-gcc
+          done
+
+      - name: Verify outputs
+        run: |
+          set -e
+          # Each sample's Makefile produces at least one ARM ELF;
+          # the binary's filename isn't necessarily the dir basename
+          # (openipc_frame_ts/ produces openipc_frame_ts_test, etc.).
+          # Walk per-dir and accept any executable ARM ELF we find.
+          for d in samples/*/; do
+              [ -f "$d/Makefile" ] || continue
+              found=$(find "$d" -maxdepth 1 -type f -executable \
+                  -exec sh -c 'file -b "$1" | grep -q "ELF 32-bit LSB.*ARM" && echo "$1"' _ {} \;)
+              if [ -z "$found" ]; then
+                  echo "NO ARM ELF in $d" >&2
+                  ls -la "$d" >&2
+                  exit 1
+              fi
+              for f in $found; do
+                  echo "ok: $f"
+              done
+          done
+
+  #
+  # qemu-ive-ops
+  #
+  # Builds QEMU with HiSilicon machine models from OpenIPC/qemu-hisilicon
+  # (cached by pinned SHA), builds the vendored kernel/ive_neo/test/qemu
+  # register test as a static ARM binary, wraps in cpio, boots under
+  # qemu-system-arm -M hi3516ev300 with a downloaded OpenIPC kernel, and
+  # asserts the test reports "Result: N/N passed".
+  #
+  # This is the only job that exercises actual kernel/ive_neo/ive_neo.c
+  # behavior end-to-end. Any change to the driver's register sequences
+  # that drifts away from the QEMU machine model will fail this job.
+  #
+  qemu-ive-ops:
+    name: QEMU IVE ops regression (${{ matrix.platform.machine }})
+    runs-on: ubuntu-latest
+    needs: libraries-cross-compile
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - machine: hi3516ev300
+            firmware: hi3516ev300
+            ive_base: '0x11320000'
+            # V4 family (ev200/ev300/gk7205v300): IVE @ 0x11320000.
+          - machine: hi3516cv500
+            firmware: hi3516cv500
+            ive_base: '0x11230000'
+            # CV500 family (cv500/av300): IVE @ 0x11230000.
+    env:
+      # Pinned SHA of OpenIPC/qemu-hisilicon. Bump this when upstream
+      # changes machine-model register semantics. The cv500 machine
+      # gained hisi-ive at 0x11230000 in OpenIPC/qemu-hisilicon#99 —
+      # cv500 regression coverage requires that SHA or later.
+      QEMU_HISILICON_SHA: master
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install QEMU build deps + ARM toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ninja-build meson pkg-config \
+            libglib2.0-dev libpixman-1-dev libfdt-dev zlib1g-dev libslirp-dev \
+            python3 python3-venv cpio \
+            gcc-arm-linux-gnueabi libc6-dev-armel-cross
+
+      - name: Clone qemu-hisilicon
+        run: |
+          git clone --depth 1 https://github.com/OpenIPC/qemu-hisilicon.git /tmp/qemu-hisilicon
+          cd /tmp/qemu-hisilicon
+          echo "SHA=$(git rev-parse HEAD)" >> $GITHUB_ENV
+
+      - name: Cache QEMU build
+        id: cache-qemu
+        uses: actions/cache@v4
+        with:
+          path: /tmp/qemu-hisilicon/qemu-src/build/qemu-system-arm
+          key: qemu-hisilicon-${{ env.SHA }}-ubuntu-latest
+
+      - name: Build QEMU (if cache miss)
+        if: steps.cache-qemu.outputs.cache-hit != 'true'
+        run: |
+          cd /tmp/qemu-hisilicon
+          bash qemu/setup.sh
+
+      - name: Verify qemu-system-arm works
+        run: |
+          QEMU=/tmp/qemu-hisilicon/qemu-src/build/qemu-system-arm
+          chmod +x $QEMU
+          $QEMU -machine help | grep -E 'hi35|gk7' | head
+          $QEMU -machine ${{ matrix.platform.machine }} -m 128M -nographic -serial null -monitor none \
+              -kernel /dev/null 2>&1 | head -3 || true
+
+      - name: Build test-ive-ops.cpio
+        run: |
+          make -C kernel/ive_neo/test/qemu CC=arm-linux-gnueabi-gcc
+          ls -la kernel/ive_neo/test/qemu/test-ive-ops kernel/ive_neo/test/qemu/test-ive-ops.cpio
+
+      - name: Download OpenIPC kernel
+        run: |
+          mkdir -p /tmp/openipc
+          cd /tmp/openipc
+          sh "$GITHUB_WORKSPACE/.github/fetch-firmware.sh" ${{ matrix.platform.firmware }} lite
+
+      - name: Run IVE register regression under QEMU
+        timeout-minutes: 3
+        run: |
+          QEMU=/tmp/qemu-hisilicon/qemu-src/build/qemu-system-arm
+          timeout 60 $QEMU \
+              -M ${{ matrix.platform.machine }} -m 128M \
+              -kernel /tmp/openipc/uImage.${{ matrix.platform.firmware }} \
+              -initrd kernel/ive_neo/test/qemu/test-ive-ops.cpio \
+              -nographic -serial mon:stdio \
+              -append "console=ttyAMA0,115200 mem=96M mmz_allocator=hisi mmz=anonymous,0,0x46000000,32M --ive-base=${{ matrix.platform.ive_base }}" \
+              2>&1 | tee ive-output.txt || true
+
+          echo
+          echo "=== Result line ==="
+          grep -E "Result: [0-9]+/[0-9]+ passed" ive-output.txt || {
+              echo "FAIL: no 'Result: N/N passed' in QEMU output" >&2
+              echo "--- last 30 lines ---"
+              tail -30 ive-output.txt
+              exit 1
+          }
+
+      - name: Upload QEMU output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-ive-ops-log-${{ matrix.platform.machine }}
+          path: ive-output.txt
+          retention-days: 7
+
+  #
+  # qemu-nnie-forward
+  #
+  # Mirrors qemu-ive-ops for the NNIE block: boots an ARM initramfs
+  # under qemu-system-arm with the hisi-nnie machine model
+  # (OpenIPC/qemu-hisilicon, added alongside hisi-ive) and runs a
+  # register-level smoke test against it.
+  #
+  # The test binary (kernel/nnie_neo/test/qemu/test-nnie-forward.c) is
+  # static-linked, drives the NNIE block via /dev/mem + anonymous-page
+  # MMZ, builds a 64-byte HW task descriptor + tskbuf tail, kicks
+  # START, polls for the finish IRQ, and asserts the dst blob holds
+  # the model's known-good mnist score vector.
+  #
+  # NNIE is cv500-only on the cv500/av300 SoCs — no equivalent on V4,
+  # so the matrix is half the size of the IVE one.
+  #
+  qemu-nnie-forward:
+    name: QEMU NNIE forward regression (${{ matrix.platform.machine }})
+    runs-on: ubuntu-latest
+    needs: libraries-cross-compile
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - machine: hi3516cv500
+            firmware: hi3516cv500
+    env:
+      # Bump when OpenIPC/qemu-hisilicon changes the hisi-nnie model.
+      QEMU_HISILICON_SHA: master
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install QEMU build deps + ARM toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ninja-build meson pkg-config \
+            libglib2.0-dev libpixman-1-dev libfdt-dev zlib1g-dev libslirp-dev \
+            python3 python3-venv cpio \
+            gcc-arm-linux-gnueabi libc6-dev-armel-cross
+
+      - name: Clone qemu-hisilicon
+        run: |
+          git clone --depth 1 https://github.com/OpenIPC/qemu-hisilicon.git /tmp/qemu-hisilicon
+          cd /tmp/qemu-hisilicon
+          echo "SHA=$(git rev-parse HEAD)" >> $GITHUB_ENV
+
+      - name: Cache QEMU build
+        id: cache-qemu
+        uses: actions/cache@v4
+        with:
+          path: /tmp/qemu-hisilicon/qemu-src/build/qemu-system-arm
+          key: qemu-hisilicon-${{ env.SHA }}-ubuntu-latest
+
+      - name: Build QEMU (if cache miss)
+        if: steps.cache-qemu.outputs.cache-hit != 'true'
+        run: |
+          cd /tmp/qemu-hisilicon
+          bash qemu/setup.sh
+
+      - name: Verify hisi-nnie machine model exists
+        run: |
+          # If the qemu-hisilicon SHA pinned above predates the NNIE
+          # model, qtree won't list `hisi-nnie` and the test below
+          # would silently read zeros from MMIO. Fail fast here.
+          QEMU=/tmp/qemu-hisilicon/qemu-src/build/qemu-system-arm
+          chmod +x $QEMU
+          if ! strings $QEMU | grep -qx "hisi-nnie"; then
+              echo "FAIL: qemu-system-arm has no hisi-nnie device type — bump QEMU_HISILICON_SHA" >&2
+              exit 1
+          fi
+          echo "ok: hisi-nnie type present in $QEMU"
+
+      - name: Build test-nnie-forward.cpio
+        run: |
+          make -C kernel/nnie_neo/test/qemu CC=arm-linux-gnueabi-gcc
+          ls -la kernel/nnie_neo/test/qemu/test-nnie-forward kernel/nnie_neo/test/qemu/test-nnie-forward.cpio
+
+      - name: Download OpenIPC kernel
+        run: |
+          mkdir -p /tmp/openipc
+          cd /tmp/openipc
+          sh "$GITHUB_WORKSPACE/.github/fetch-firmware.sh" ${{ matrix.platform.firmware }} lite
+
+      - name: Run NNIE Forward regression under QEMU
+        timeout-minutes: 3
+        run: |
+          QEMU=/tmp/qemu-hisilicon/qemu-src/build/qemu-system-arm
+          timeout 60 $QEMU \
+              -M ${{ matrix.platform.machine }} -m 128M \
+              -kernel /tmp/openipc/uImage.${{ matrix.platform.firmware }} \
+              -initrd kernel/nnie_neo/test/qemu/test-nnie-forward.cpio \
+              -nographic -serial mon:stdio \
+              -append "console=ttyAMA0,115200 mem=96M mmz_allocator=hisi mmz=anonymous,0,0x46000000,32M" \
+              < /dev/zero 2>&1 | tee nnie-output.txt || true
+
+          echo
+          echo "=== Result line ==="
+          grep -E "Result: [0-9]+/[0-9]+ passed" nnie-output.txt || {
+              echo "FAIL: no 'Result: N/N passed' in QEMU output" >&2
+              echo "--- last 30 lines ---"
+              tail -30 nnie-output.txt
+              exit 1
+          }
+
+          # All 4 sub-tests must pass (1 poweron + 3 forwards). A
+          # partial pass means the model regressed somewhere — fail
+          # the job instead of silently accepting a smaller number.
+          if ! grep -qE "Result: 4/4 passed" nnie-output.txt; then
+              echo "FAIL: NNIE regression test reported less than 4/4" >&2
+              tail -30 nnie-output.txt
+              exit 1
+          fi
+
+      - name: Upload QEMU output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-nnie-forward-log-${{ matrix.platform.machine }}
+          path: nnie-output.txt
+          retention-days: 7
+
+  #
+  # qemu-boot
+  #
+  # Matrix job that boots OpenIPC firmware for each supported platform
+  # under qemu-system-arm and verifies the kernel reaches userspace.
+  # Each platform uses its own QEMU machine model from qemu-hisilicon.
+  #
+  qemu-boot:
+    name: QEMU boot (${{ matrix.machine }}${{ matrix.variant && format('_{0}', matrix.variant) || '' }})
+    runs-on: ubuntu-latest
+    # Per-row continue-on-error, for a platform that surfaces a known
+    # firmware-side bug: set `allow-failure: true` on its row with a comment
+    # naming the OpenIPC/firmware issue. The row still runs and its failure
+    # stays visible in the log; it just doesn't gate the workflow. No row
+    # needs it today -- take the flag off as soon as the firmware fix lands.
+    continue-on-error: ${{ matrix.allow-failure == true }}
+    env:
+      QEMU_HISILICON_SHA: master
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - machine: hi3516cv100
+            firmware: hi3516cv100
+            mem: 64M
+            append: "console=ttyAMA0,115200 mem=64M root=/dev/ram0 rootfstype=squashfs"
+          # cv200/av100/cv300/3519v101: cap kernel mem= at 32M so it ends at
+          # 0x82000000, where the qemu-hisilicon machine emulator appends the
+          # MMZ region in cmdline (mmz=...,0x82000000,N). Previously these
+          # rows passed mem=<full QEMU RAM>, and the kernel range overlapped
+          # MMZ. The legacy MMZ allocator silently tolerated the overlap
+          # until OpenIPC/openhisilicon#73 made it return -ENODEV when every
+          # configured zone is rejected; with that strict check + post-#2059
+          # firmware where load_hisilicon no longer exits before insmod, the
+          # overlap surfaces as "insmod: can't insert 'mmz.ko': No such
+          # device". 32M kernel = production OS/MMZ split for V1/V2/V2A/V3A.
+          - machine: hi3516cv200
+            firmware: hi3516cv200
+            mem: 64M
+            append: "console=ttyAMA0,115200 mem=32M root=/dev/ram0 rootfstype=squashfs"
+          # av100 gates again. Its remove_detect rmmod'ed the installed
+          # filenames rather than the names the open_* builds register as;
+          # OpenIPC/firmware#2486 unloads by either, and the row has booted
+          # with no "rmmod: can't unload" since.
+          - machine: hi3516av100
+            firmware: hi3516av100
+            mem: 256M
+            append: "console=ttyAMA0,115200 mem=32M root=/dev/ram0 rootfstype=squashfs"
+          - machine: hi3516cv300
+            firmware: hi3516cv300
+            mem: 128M
+            min_modules: 20
+            append: "console=ttyAMA0,115200 mem=32M root=/dev/ram0 rootfstype=squashfs"
+          - machine: hi3519v101
+            firmware: hi3519v101
+            mem: 64M
+            append: "console=ttyAMA0,115200 mem=32M root=/dev/ram0 rootfstype=squashfs"
+          - machine: hi3516cv500
+            firmware: hi3516cv500
+            mem: 128M
+            append: "console=ttyAMA0,115200 earlyprintk mem=128M root=/dev/ram0 rootfstype=squashfs"
+          # ev200/gk7205v200 (V4 lite, mmz_allocator=hisi): open_rgn.ko
+          # oopses in RGN_Init while load_hisilicon inserts it, so late
+          # init never finishes (#227). Everything still gates except the
+          # late-init checks, which report a warning until that is fixed.
+          - machine: hi3516ev200
+            firmware: hi3516ev200
+            mem: 128M
+            known_late_init_failure: "open_rgn RGN_Init oops (#227)"
+            append: "console=ttyAMA0,115200 earlyprintk mem=96M root=/dev/ram0 rootfstype=squashfs mmz_allocator=hisi mmz=anonymous,0,0x46000000,32M"
+          # gk7205v200 boots the layout real boards ship: 64 MB of DDR,
+          # mem=32M, the MMZ in the other 32M. The image has no U-Boot
+          # environment, so load_goke takes its totalmem default of 64M, and
+          # since OpenIPC/firmware#2623 it trusts the kernel's mem= over osmem;
+          # mem=96M on 128M then reads as more OS memory than the board has.
+          - machine: gk7205v200
+            firmware: gk7205v200
+            mem: 64M
+            known_late_init_failure: "open_rgn RGN_Init oops (#227)"
+            append: "console=ttyAMA0,115200 earlyprintk mem=32M root=/dev/ram0 rootfstype=squashfs mmz_allocator=hisi mmz=anonymous,0,0x42000000,32M"
+          # hi3516ev300_neo board (V4 + CMA). The bootargs match what the
+          # production U-Boot passes: mem=<totalmem> with mmz_allocator=cma
+          # and the MMZ chunk CMA-reserved within that range. The cmdline
+          # exercises the load_hisilicon mem=/totalmem split logic that
+          # OpenIPC/firmware#2059 tracks.
+          - machine: hi3516ev300
+            firmware: hi3516ev300
+            mem: 128M
+            min_modules: 5
+            append: "console=ttyAMA0,115200 panic=20 mem=128M root=/dev/ram0 rootfstype=squashfs mmz_allocator=cma mmz=anonymous,0,0x42000000,96M"
+          # cv200_neo (V2 / ARM926EJ-S, Linux 7.0). Builds from
+          # openhisilicon main carrying the open_v2_shim re-exports
+          # (do_gettimeofday, init_timer_key, register_sysctl_table,
+          # printk, etc.) for the 4.9-compiled blobs. Tarball
+          # `openipc.hi3516cv200-nor-neo.tgz` is published by the
+          # firmware nightly (OpenIPC/firmware#2124). Boots to login,
+          # eth0 gets DHCP from SLIRP, no Oops/panic. load_hisilicon
+          # doesn't load HiSi blobs on neo (kernel-version path
+          # mismatch — separate firmware-side follow-up), so we don't
+          # set min_modules here.
+          - machine: hi3516cv200
+            firmware: hi3516cv200
+            variant: neo
+            mem: 64M
+            append: "console=ttyAMA0,115200 mem=32M root=/dev/ram0 rootfstype=squashfs"
+          # av100_neo (V2A / Cortex-A7, Linux 7.0). Same shape as
+          # cv200_neo but using mainline hi3516av100 SoC support +
+          # hisi_higmac ethernet driver from openipc/linux#44.
+          # Tarball `openipc.hi3516av100-nor-neo.tgz` from firmware
+          # nightly. Same login + DHCP + ping coverage; no module
+          # count assertion (same reason as cv200_neo).
+          - machine: hi3516av100
+            firmware: hi3516av100
+            variant: neo
+            mem: 256M
+            append: "console=ttyAMA0,115200 mem=32M root=/dev/ram0 rootfstype=squashfs"
+          # av200_neo (V3A / Cortex-A7 in QEMU; real silicon is A17+A7
+          # big.LITTLE distinguished from v101 only by SCSYSID0 sub-variant
+          # byte). Kernel 7.0 with the open_v3a_shim re-exports landed in
+          # openhisilicon#188 + the legacy __ksymtab_* preservation fix in
+          # #190. Firmware-side target is OpenIPC/firmware#2137 — tarball
+          # openipc.hi3516av200-nor-neo.tgz is published by the firmware
+          # nightly. mem=128M to match the V3A osmem/totalmem split
+          # load_hisilicon uses (kernel 0x80000000+128M, MMZ at
+          # 0x88000000+384M); higher mem= overlaps MMZ and trips
+          # `MMZ conflict to kernel memory` on insmod.
+          - machine: hi3516av200
+            firmware: hi3516av200
+            variant: neo
+            mem: 256M
+            append: "console=ttyAMA0,115200 mem=128M root=/dev/ram0 rootfstype=squashfs"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install QEMU build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ninja-build meson pkg-config \
+            libglib2.0-dev libpixman-1-dev libfdt-dev zlib1g-dev libslirp-dev \
+            python3 python3-venv
+
+      - name: Clone qemu-hisilicon
+        run: |
+          git clone --depth 1 https://github.com/OpenIPC/qemu-hisilicon.git /tmp/qemu-hisilicon
+          cd /tmp/qemu-hisilicon
+          echo "SHA=$(git rev-parse HEAD)" >> $GITHUB_ENV
+
+      - name: Cache QEMU build
+        id: cache-qemu
+        uses: actions/cache@v4
+        with:
+          path: /tmp/qemu-hisilicon/qemu-src/build/qemu-system-arm
+          key: qemu-hisilicon-${{ env.SHA }}-ubuntu-latest
+
+      - name: Build QEMU (if cache miss)
+        if: steps.cache-qemu.outputs.cache-hit != 'true'
+        run: |
+          cd /tmp/qemu-hisilicon
+          bash qemu/setup.sh
+
+      - name: Download OpenIPC firmware
+        run: |
+          mkdir -p /tmp/openipc
+          cd /tmp/openipc
+          sh "$GITHUB_WORKSPACE/.github/fetch-firmware.sh" ${{ matrix.firmware }} ${{ matrix.variant || 'lite' }}
+
+      # Inject a tiny S99 init script that emits a serial-console marker
+      # with the count of HiSilicon modules currently loaded. Repacks the
+      # squashfs so the QEMU boot exercises the real init flow and we can
+      # grep deterministic markers out of qemu-output.txt afterwards. The
+      # probe gives a *positive* signal that load_hisilicon actually
+      # populated the kernel — without it all assertions are negative
+      # ("absence of known error strings") and silent failures slip past.
+      #
+      # Counts every loaded module except the always-present FS modules.
+      # That covers both V3+ source-built open_* names and V1/V2/V2A
+      # vendor-named blobs (hi3518_*, mmz, acodec, hi_*) since cv100/cv200
+      # firmware loads modules under the vendor names exposed by
+      # objcopy --redefine-sym wrappers.
+      - name: Inject lsmod probe into rootfs
+        run: |
+          sudo apt-get install -y --no-install-recommends squashfs-tools
+          cd /tmp/openipc
+          sudo unsquashfs -d rfs rootfs.squashfs.${{ matrix.firmware }}
+          sudo tee rfs/etc/init.d/S99lsmodprobe > /dev/null <<'EOS'
+          #!/bin/sh
+          # CI probe — emits markers for openhisilicon's qemu-boot job to grep.
+          # Runs after S95majestic so load_hisilicon has had its chance.
+          [ "$1" = start ] || exit 0
+          # Wait briefly for HiSilicon modules to settle. Threshold of 5
+          # is conservative — every supported platform loads at least
+          # OSAL/MMZ + base + sys + sys_config + a couple of drivers.
+          count_hisi() { lsmod | tail -n +2 | grep -cvE '^(vfat|fat)\b'; }
+          for _ in 1 2 3 4 5; do
+              [ "$(count_hisi)" -ge 5 ] && break
+              sleep 1
+          done
+          echo "===CI:HISI_MOD_COUNT===$(count_hisi)==="
+          echo "===CI:LSMOD_BEGIN==="
+          lsmod
+          echo "===CI:LSMOD_END==="
+          EOS
+          sudo chmod +x rfs/etc/init.d/S99lsmodprobe
+
+          # Give the camera a stored MAC, as a provisioned camera has.
+          #
+          # OpenIPC/firmware#2408 (2026-09-13) runs `extutils check_mac` from
+          # S30customizer. With no stored address -- and this rootfs has
+          # neither a fw_env.config nor a writable /etc -- it mints one with
+          # `od -N5 /dev/urandom`, which blocks until the guest CRNG is
+          # initialised. On the hi3516av100 machine model the kernel gets no
+          # arch-timer interrupt ("arch_timer: No interrupt available") and
+          # has next to no entropy, so that read measured 85 s of guest
+          # uptime: av100_neo then fell off the old fixed 90 s budget at a
+          # different init script each run, which looked like flakiness but
+          # was one deterministic stall. Every other row reaches check_mac
+          # 2-6 s after boot.
+          #
+          # Rejected: seeding the CRNG instead. These machine models have no
+          # virtio-rng, and seedrng will not credit a seed it cannot unlink,
+          # which on a read-only squashfs is every seed. mac_stored() reads
+          # /etc/ethaddr as its fallback store, so a fixed locally
+          # administered unicast address (02: prefix) short-circuits the
+          # whole path. The firmware-side bug (boot blocking on urandom on
+          # any camera whose env cannot be written) is tracked upstream.
+          echo 02:00:00:c1:00:01 | sudo tee rfs/etc/ethaddr > /dev/null
+          sudo mksquashfs rfs rootfs.squashfs.${{ matrix.firmware }}.probed \
+              -comp xz -all-root -noappend -no-progress >/dev/null
+          sudo mv rootfs.squashfs.${{ matrix.firmware }}.probed \
+                  rootfs.squashfs.${{ matrix.firmware }}
+
+      - name: Boot under QEMU
+        timeout-minutes: 6
+        run: |
+          QEMU=/tmp/qemu-hisilicon/qemu-src/build/qemu-system-arm
+          chmod +x $QEMU
+
+          # Wait for the boot, don't guess how long it takes.
+          #
+          # This used to be `timeout 90 qemu ... | tee` followed by a grep.
+          # That cannot tell a slow boot from a hung one, and when it fails
+          # the log only shows where the clock ran out, not where the time
+          # went. av100_neo spent a week red that way on one 85 s stall
+          # (see the /etc/ethaddr note in the inject step): it stopped at
+          # mdev, then network, then the DHCP lease on successive runs, and
+          # read as flakiness.
+          #
+          # Now QEMU runs in the background and is stopped as soon as the
+          # boot is proven: the crond marker (same regexes as the final
+          # gate below), then S99lsmodprobe's LSMOD_END, which is the last
+          # thing init prints, plus a few seconds for late console writers
+          # (majestic's "Cannot get chip id" is one the checks look for).
+          # Most rows now take ~15 s instead of 90. BOOT_CEILING is the
+          # hang detector, not a performance budget; the timing report
+          # below is what makes creep visible.
+          #
+          # qemu-output.txt stays the raw console, byte for byte, so the
+          # offline replay of the checks below still works on it.
+          # qemu-timed.txt is the same stream with a host timestamp per
+          # line, for the timing report only.
+          BOOT_CEILING=180
+          SETTLE_CEILING=60
+          CROND_RE='Starting crond: OK|crond \(busybox [0-9.]+\) started'
+          OOPS_RE='Internal error: Oops|Kernel panic - not syncing|Unable to handle kernel'
+
+          # Nothing stale may satisfy the first poll or name the wrong PID.
+          rm -f qemu-output.txt qemu-timed.txt qemu.pid
+          t0=$EPOCHREALTIME
+          { timeout $((BOOT_CEILING + SETTLE_CEILING + 30)) $QEMU \
+              -M ${{ matrix.machine }} -m ${{ matrix.mem }} \
+              -kernel /tmp/openipc/uImage.${{ matrix.firmware }} \
+              -initrd /tmp/openipc/rootfs.squashfs.${{ matrix.firmware }} \
+              -nographic -serial mon:stdio \
+              -pidfile qemu.pid \
+              -append "${{ matrix.append }}" \
+              < /dev/null 2>&1 || true; } |
+            tee qemu-output.txt |
+            while IFS= read -r line || [ -n "$line" ]; do
+                printf '%s\t%s\n' "$EPOCHREALTIME" "$line"
+            done > qemu-timed.txt &
+          pipe=$!
+
+          qemu_alive() { [ -s qemu.pid ] && kill -0 "$(cat qemu.pid)" 2>/dev/null; }
+          # Waits up to $1 s for regex $2 while QEMU is up; 0 if it appeared.
+          wait_for() {
+              end=$((SECONDS + $1))
+              while [ $SECONDS -lt $end ]; do
+                  grep -qaE "$2" qemu-output.txt 2>/dev/null && return 0
+                  kill -0 $pipe 2>/dev/null || break   # console hit EOF: QEMU is gone
+                  sleep 1
+              done
+              grep -qaE "$2" qemu-output.txt 2>/dev/null
+          }
+
+          if wait_for $BOOT_CEILING "$CROND_RE"; then
+              # An oops ends the wait too: the insmod that hit it never
+              # returns, so LSMOD_END will not come and the late-init
+              # check below reports it.
+              wait_for $SETTLE_CEILING "===CI:LSMOD_END===|$OOPS_RE" || true
+              sleep 3
+          else
+              echo "::warning::no crond marker within ${BOOT_CEILING}s (or QEMU exited), stopping QEMU"
+          fi
+          qemu_alive && kill "$(cat qemu.pid)"
+          wait $pipe || true
+
+          echo
+          echo "=== Boot timing ==="
+          # Seconds from QEMU start to the crond marker, and the three
+          # longest silences on the console with the line that ended each.
+          # A stall shows up here by name even when the boot still passes.
+          # Three, not one: a background writer can split a single stall
+          # (fake-hwclock's 60 s save cut av100_neo's 85 s one in two).
+          # The regex goes in through the environment: awk -v would
+          # process its backslashes and turn \( into a group.
+          CROND_RE="$CROND_RE" awk -F'\t' -v t0="$t0" '
+              function keep(g, at, l,    i, j) {
+                  for (i = 1; i <= 3; i++) if (g > G[i]) break
+                  if (i > 3) return
+                  for (j = 3; j > i; j--) { G[j] = G[j-1]; A[j] = A[j-1]; L[j] = L[j-1] }
+                  G[i] = g; A[i] = at; L[i] = l
+              }
+              NR == 1 { re = ENVIRON["CROND_RE"] }
+              { t = $1 - t0; line = substr($0, length($1) + 2); gsub(/\r/, "", line) }
+              crond == "" && line ~ re { crond = t }
+              NR > 1 { keep(t - pt, t, line) }
+              { pt = t }
+              END {
+                  if (crond != "") printf "boot reached crond in %.1f s\n", crond
+                  else             printf "boot never reached crond (console ran %.1f s)\n", pt
+                  print "longest console silences (gap, then the line that ended it):"
+                  for (i = 1; i <= 3 && i in G; i++)
+                      printf "  %5.1f s, until %6.1f s: %s\n", G[i], A[i], L[i]
+              }' qemu-timed.txt
+
+          echo
+          echo "=== Checking for successful boot ==="
+
+          fail_with() {
+              echo "--- last 50 lines of QEMU output ---"
+              tail -50 qemu-output.txt
+              # Rows in the matrix marked `allow-failure: true` know about a
+              # pre-existing firmware-side bug; downgrade fail to warning so
+              # the job conclusion is success (mergeStateStatus stays CLEAN)
+              # while the regression remains visible in the log.
+              if [ "${{ matrix.allow-failure }}" = "true" ]; then
+                  echo "::warning::EXPECTED FAIL (${{ matrix.machine }}, allow-failure): $1"
+                  exit 0
+              fi
+              echo "FAIL (${{ matrix.machine }}): $1" >&2
+              exit 1
+          }
+
+          # Module-load regression checks — see OpenIPC/openhisilicon#62.
+          # The bug: load_hisilicon's remove_detect() rmmods modules by vendor
+          # name (mmz, hi_media, sys_config, hi_sensor_i2c, ...) but openhisilicon
+          # source-built modules announce themselves as open_* internally, so
+          # those rmmods fail silently. The previous QEMU assertion (just "crond
+          # reached userspace") missed it because the script exits cleanly when
+          # SENSOR=unknown and crond starts regardless.
+          # Unanchored (and -a) for the same reason as the mod-count grep
+          # below: console writers interleave, so a real "rmmod: can't
+          # unload" can arrive with another daemon's output already on the
+          # line. A ^-anchored pattern would then miss the regression.
+          if grep -qaE "rmmod: can't unload" qemu-output.txt; then
+              fail_with "rmmod failure during boot — vendor name does not match loaded module name (#62)"
+          fi
+          if grep -qF "Error: There's something wrong, please check!" qemu-output.txt; then
+              fail_with "load_hisilicon report_error exit"
+          fi
+          if grep -q "Cannot get chip id" qemu-output.txt; then
+              fail_with "majestic 'Cannot get chip id' — sys module not active"
+          fi
+          # OpenIPC/firmware#2059: load_hisilicon mis-parses kernel cmdline
+          # mem=NM as os_mem_size on V4+CMA boards (where mem= is total RAM,
+          # not the OS-only slice), trips the "os_mem >= total_mem" guard, and
+          # exits before any insmod. Manifests with this exact stderr line
+          # (unanchored for the interleave reason noted above).
+          if grep -qaE "\[err\] os_mem\[[0-9]+\], over total_mem\[[0-9]+\]" qemu-output.txt; then
+              fail_with "load_hisilicon: cmdline mem= misread as OS-only memory (firmware#2059)"
+          fi
+
+          # The S99lsmodprobe init script we injected earlier prints
+          # HISI_MOD_COUNT to the serial console. Always log the count for
+          # diagnosability; gate on it only for matrix rows that opt in via
+          # `min_modules`. -a/--text on grep so the binary serial output
+          # (TTY control chars) doesn't suppress matches; pattern is
+          # unanchored so a leading \r from the TTY doesn't break it.
+          mod_count_line=$(grep -oaE 'CI:HISI_MOD_COUNT===[0-9]+===' qemu-output.txt | tail -1)
+          mod_count=$(echo "$mod_count_line" | grep -oE '[0-9]+' || echo "")
+          echo "PROBE: ${{ matrix.machine }} loaded ${mod_count:-?} HiSilicon modules"
+
+          # Per-row gate: rows that set `min_modules:` require at least that
+          # many HiSilicon modules to be loaded after boot. Rows that don't
+          # set it stay on the existing string-pattern assertions only —
+          # adding the count assertion to a row is opt-in as we audit each
+          # platform's QEMU bootargs / firmware behaviour and confirm a
+          # baseline count it can reliably hit. New row added today:
+          # hi3516ev300 (V4+CMA) — the regression OpenIPC/firmware#2059
+          # actually showed up on; min=5 catches a load_hisilicon exit
+          # before any insmod even when the script's specific stderr
+          # patterns drift in future.
+          min='${{ matrix.min_modules }}'
+          if [ -n "$min" ] && [ "$min" -gt 0 ] 2>/dev/null; then
+              if [ -z "$mod_count" ]; then
+                  echo "--- captured lsmod ---"
+                  awk '/CI:LSMOD_BEGIN/,/CI:LSMOD_END/' qemu-output.txt
+                  fail_with "S99lsmodprobe never ran (no CI:HISI_MOD_COUNT marker) — boot didn't reach late init"
+              fi
+              if [ "$mod_count" -lt "$min" ]; then
+                  echo "--- captured lsmod ---"
+                  awk '/CI:LSMOD_BEGIN/,/CI:LSMOD_END/' qemu-output.txt
+                  fail_with "only $mod_count HiSilicon modules loaded (expected ≥$min) — vendor module-load regression"
+              fi
+          fi
+
+          # Final gate: the boot reached userspace. Two accepted markers,
+          # because the obvious one is a race — OpenIPC/openhisilicon#218.
+          #
+          # The init script prints "Starting crond: ", forks the daemon, then
+          # prints "OK". busybox crond writes its own startup banner to the
+          # same console from the forked child, so whether that banner lands
+          # *between* the two writes is a coin flip. When it does, the tokens
+          # are no longer on one line and a single-line grep misses them on a
+          # fully booted image:
+          #
+          #   pass:  Starting crond: OK
+          #          crond[344]: crond (busybox 1.36.1) started, log level 8
+          #   fail:  Starting crond: crond[344]: crond (busybox 1.36.1) ...
+          #          OK
+          #
+          # Same image, same crond, same PID. Seen on hi3516av100_neo (a row
+          # with no allow-failure, so it gated every PR) at main@001096ae and
+          # twice on #217. The daemon's own banner is the stronger evidence
+          # anyway — printed by crond itself rather than by the wrapper — so
+          # accept either. Not every platform reaches the console with it
+          # (syslogd may swallow it), hence the OR rather than a swap.
+          #
+          # General shape to watch for: any "Starting X: OK" is two writes
+          # with a fork in between. Never assert on it as one string.
+          if ! grep -qaE "Starting crond: OK" qemu-output.txt &&
+             ! grep -qaE "crond \(busybox [0-9.]+\) started" qemu-output.txt; then
+              fail_with "boot never reached crond (no 'Starting crond: OK' and no crond startup banner)"
+          fi
+
+          # Late init: crond alone is not enough. It starts at S60, before
+          # load_hisilicon inserts a single vendor module, so a row whose
+          # module load oopsed or wedged still passed the crond gate --
+          # which is how #227 sat unseen on two V4 rows. S99lsmodprobe is
+          # the last init script, so its LSMOD_END proves init ran to the
+          # end, and no kernel oops may appear anywhere in the boot.
+          #
+          # Rows with `known_late_init_failure` downgrade only these two
+          # checks, to a warning naming the known cause; every other check
+          # still gates them. allow-failure would have hidden all of them.
+          late_init_fail() {
+              known='${{ matrix.known_late_init_failure }}'
+              if [ -n "$known" ]; then
+                  late_known=1
+                  echo "::warning::KNOWN late-init failure (${{ matrix.machine }}, $known): $1"
+              else
+                  fail_with "$1"
+              fi
+          }
+          # ${OOPS_RE:?}, not $OOPS_RE: an offline replay of this block
+          # without the definition above must not grep for "" and match all.
+          if grep -qaE "${OOPS_RE:?}" qemu-output.txt; then
+              echo "--- first oops ---"
+              grep -aE -m1 -A8 "$OOPS_RE" qemu-output.txt
+              late_init_fail "kernel oops during boot: $(grep -aoE -m1 'PC is at [^ ]+( \[[^]]+\])?' qemu-output.txt || echo 'see log')"
+          fi
+          if ! grep -qa '===CI:LSMOD_END===' qemu-output.txt; then
+              late_init_fail "late init never finished (no S99lsmodprobe LSMOD_END marker after crond)"
+          fi
+
+          if [ -n "${late_known:-}" ]; then
+              echo "PASS (with known late-init failure): ${{ matrix.machine }} booted to userspace"
+          else
+              echo "PASS: ${{ matrix.machine }} kernel booted to userspace, no module-load regressions"
+          fi
+
+      - name: Upload QEMU output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-boot-${{ matrix.machine }}${{ matrix.variant && format('_{0}', matrix.variant) || '' }}
+          path: |
+            qemu-output.txt
+            qemu-timed.txt
+          retention-days: 7
+
+  #
+  # bootrom-lint
+  #
+  # Compile-gate for the reverse-engineered bootrom source under bootrom/.
+  # The .bin and disasm.txt are gitignored (only contributors with the
+  # physical camera can produce them), so CI exercises just the RE'd C/asm:
+  # it must keep linking cleanly under arm-none-eabi-gcc as analysis grows.
+  # NOT a flashable-image check — see bootrom/README.
+  #
+  bootrom-lint:
+    name: bootrom RE compile-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ARM bare-metal toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
+
+      - name: Build bootrom/hi3516av300/re
+        run: |
+          make -C bootrom/hi3516av300 build
+          test -f bootrom/hi3516av300/re.elf
+          # Verify the linked symbol set matches the tracked manifest.
+          # Drift in either direction (additions or removals) fails the
+          # diff; updating the manifest is a deliberate, reviewable act.
+          # Drop compiler-generated clones (.part.N, .constprop.N, .isra.N,
+          # .cold) — those are gcc-version-dependent optimizer artefacts,
+          # not API contract.  Without this filter, ubuntu-24.04's
+          # gcc 13.2 emits klad_post_unlock.part.0 that arch's
+          # gcc 14.2 doesn't, and the manifest diff fails.
+          arm-none-eabi-objdump -t bootrom/hi3516av300/re.elf \
+              | grep ' F ' | awk '{ print $NF }' \
+              | grep -v '\.part\.\|\.constprop\.\|\.isra\.\|\.cold' \
+              | LC_ALL=C sort -u \
+              > /tmp/actual-symbols
+          diff -u bootrom/hi3516av300/.expected-symbols /tmp/actual-symbols
+          echo "ok: re.elf symbol set matches manifest ($(wc -l < /tmp/actual-symbols) functions)"

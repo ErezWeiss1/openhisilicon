@@ -1,0 +1,8 @@
+# --- HWRNG module (source driver) ---
+# Kernel 4.9 + GCC 13 trips -Wmissing-attributes on module_init/exit alias
+# decls (aliases inherit fewer attrs than the target). Suppress: this is
+# a known compat issue, fixed in newer kernels' include/linux/module.h.
+CFLAGS_hisi-hwrng.o := -Wno-missing-attributes
+
+$(PREFIX)hwrng-objs := hisi-hwrng/hisi-hwrng.o
+obj-m += $(PREFIX)hwrng.o

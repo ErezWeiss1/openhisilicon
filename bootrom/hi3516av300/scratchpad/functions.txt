@@ -1,0 +1,136 @@
+hi3516av300 bootrom — function ledger
+======================================
+
+Format: <addr> <name> <signature/notes>
+
+Reversed in re/bootloader.c + re/start.S:
+
+func_00  0x040000e0  memcpy32(src, dst, size)               LDM/STM r3-r10 loop, used by _start to copy clear_remap thunk to SDRAM
+func_01  0x04002844  disable_ctrl_features                  MRC/BIC c1c0: clear I-cache, D-cache, MMU, branch prediction, align check
+func_02  0x04002858  enable_instruction_cache               sets parity, calls invalidate_instruction_pipeline, enables I-cache, ISB
+func_03  0x04002880  disable_instruction_cache              clears I-cache enable, tail-calls invalidate_instruction_pipeline
+func_04  0x040028e0  invalidate_instruction_pipeline        MCR p15 c8c7 (TLB) + MCR p15 c7c5 (I-cache)
+func_05  0x04002900  memset(dst, val, size)                 unrolled 8-byte STM with byte-tail
+func_06  0x040029a0  memcpy(dst, src, size)                 aligned + unaligned paths, unrolled
+func_07  0x04002cd8  strlen(str)                            LDRB + CMP, returns end-start
+func_08  0x04002d04  strncmp(s1, s2, n)                     two-pointer compare, returns signed diff
+func_09  0x04002e00  strcmp(s1, s2)                         two-pointer compare until first mismatch or NUL
+func_0a  0x04000140  configure_soc_clocks                   polls PLL_LOCK_STAT for APLL+DPLL+EPLL (mask 0xb, timeout 5001 iters), writes 0x592 into SOC_CONFIG, NOP-settles 10 cycles
+func_0b  0x040001b0  reset_soc_clocks                       inverse of configure_soc_clocks — clears SOC_CONFIG bits 0-10 (bit 9 preserved), 10-NOP settle
+func_0c  0x04002704  main                                   bootloader main flow — 4 boot paths dispatched on SYSSTAT bits 4/5 + PERISTAT bit 0
+func_0d  0x0400105c  is_update_mode                         polls GPIO0 pin 0 — recovery button held LOW for ~20s returns 1
+func_0e  0x04001128  initial_memory_setup                   enable I-cache, copy 12 B from bootrom 0x7f44 to SRAM 0x4010004, then organize_memory_chunks
+func_0f  0x04002284  bootrom_secure_check                   ungate KLAD/RSA/TRNG/SPACC, dispatch among klad_{load_keys,verify,alt_verify,unlock}
+func_10  0x04002368  fastboot_update                        burn_bootloader over UART; eMMC reset path on SYSSTAT.bit4
+func_11  0x040023c4  media_update                           PERISTAT bit 4/5 selects fastboot-media vs alt-media path
+func_12  0x0400249c  config_use_flash                       flash boot — memcpy from FLASH_START, parse "MBSB" header, relocate into DDR
+func_13  0x040025d4  bootrom_alt_media                      eMMC alt boot — initialize_emmc + memcpy_emmc + parse header
+func_14  0x040051bc  timer_start                            ungate SC_CTRL bit 16, TIMER0_CONTROL = 0xc2
+func_15  0x040051e8  timer_stop                             TIMER0_CONTROL = 0
+func_16  0x040051f8  timer_reset_counter                    LOAD = 0xFFFFFFFF, restart timer, snapshot to SRAM[0x180]
+func_17  0x04002cb4  timer_wait_seconds(n)                  loops n × wait_timer_0(1000)
+func_18  0x04003318  initialize_uart0_hdwr                  set UART0 pinmux (IOCFG1+0x10/0x14), tail-call initialize_uart0
+func_19  0x04003334  disable_uart0_hdwr                     tail-call disable_uart0
+func_1a  0x04003338  uart0_flush_rx_fifo                    while (has_rx_data) uart0_read()
+func_1b  0x040034ac  burn_bootloader                        wait UART start-frame, set SYSCTRL[0x154]=1, recv payload
+func_1c  0x04004060  reset_emmc                             EMMC controller reset cycle via MMC_CARD_RSTN + MMC_CTRL=7
+func_1d  0x0400445c  close_sdio0                            free SDIO0 chunk, MMC_CTRL=7 + MMC_PWREN=0
+func_1e  0x040040a0  memcpy_emmc(dst, off, len)             drain MMC_DATA FIFO into dst until len words consumed
+func_1f  0x040052b4  wait_timer_0(ticks)                    busy-spin on TIMER0.VALUE until target reached
+func_20  0x04005348  invoke_foreign_code(fn)                blx fn, then set SRAM[0x188]=1 (stage-2 loaded flag)
+func_21  0x040001dc  parse_image_header(dst)                validate header at SRAM 0x500: magic, mode, four-word descriptor chain
+func_22  0x040004b8  set_boot_target_addr(boot_pin)         boot_pin==1: init eMMC + memcpy_emmc → SRAM, else flash. Then four-word cross-check.
+func_23  0x0400414c  media_init_a                           pinmux IOCFG0[0x1c..0x24] + IOCFG0[0x28..0x3c] for SDIO0 pads (vendor-specific)
+func_24  0x040041c0  media_init_b                           CRG.SDIO0_CONFIG reset cycle: assert + 1ms wait + deassert with new clock select
+func_25  0x040041f0  media_init_c                           polls SDIO0.PWREN three times; returns 0 if zero, -1 otherwise
+func_26  0x040046c8  media_program_a                        alloc 28-byte chunk in SRAM[0x168], populate context, call media_program_b
+func_27  0x04005384  media_finalize_a                       media_finalize_b(SRAM→target, 0x6000) → invoke_foreign_code, then again at DDR+0x80000
+func_28  0x04005670  media_init_alt                         poll media_sub_a until media_sub_b ticks elapsed, return 0 (no error)
+func_29  0x040056c0  media_init_alt_finalize                wait for SRAM[0x18c]==1 or ==4, invoke loaded fn, check SYSCTRL[0x150] for "CMEM" magic
+func_2a  0x04002a80  organize_memory_chunks                 build chunk-allocator descriptor table from bootrom 0x7e5c (size,count) array
+func_2b  0x04001af4  klad_unlock                            dispatches on PERISTAT bits 4/5 between klad_check_a and klad_check_b
+func_2c  0x04003de0  initialize_emmc                        DW MMC controller bring-up: pin cfg, CRG reset, 3-mode dispatch (PERISTAT bits 9..8), CMD/CTYPE setup, 1-sec timeout poll on RINTSTS.bit9
+func_2d  0x04001470  klad_load_keys                         UART secure-load entry: uart0_wait_start_frame → uart0_recv_signed_image → alloc 48B chunk → parse_image_header → klad_validate_header → klad_dispatch_sig → invoke_foreign_code → optional refresh_ddr + re-dispatch; status codes via uart0_send_status
+func_2e  0x04001f0c  klad_verify                            (SYSSTAT.bit4) secure path: initialize_emmc + memcpy_emmc → same header+sig+verify chain → on PERISTAT.bit1 retry via klad_verify_rsa
+func_2f  0x04001bdc  klad_alt_verify                        !(SYSSTAT.bit4) secure path: magic guard SYSCTRL[0x14] → klad_alt_dispatch on match; else flash 4-word check → klad_alt_e88 on hit; else same header+sig+verify chain from FLASH_START
+func_30  0x040002cc  get_random_value                       TRNG read with 200ms timeout — drains TRNG_FIFO when TRNG_DATA_ST.[8:15] non-zero
+func_31  0x04000320  uart0_send_status(c, x)                send 5-byte status frame "\nE<c>D<x>" via uart0_write
+func_32  0x04000358  refresh_ddr(mctl_mode)                 DDR controller refresh: poll DDRC+0x294.bit0, optional TRNG-fed PHY recal, set DDRC[0]=2 on second pass
+func_33  0x040010ac  reset_secure_io_peripherals(tag, pin)  toggle CRG[0x1a0] KLAD/RSA/SPACC/TRNG bits, then dispatch on boot_type to chain into reset_emmc / close_sdio0 / disable_uart0_hdwr
+func_34  0x04002b78  alloc_chunk(size)                      bit-mask allocator walking SRAM[0x10] descriptor table
+func_35  0x04002c1c  free_chunk(addr)                       inverse — find size class and clear allocation bit
+func_36  0x04002c84  wait_long_timer_0(ms)                  loops wait_timer_0 in ≤0x989680 (10M) chunks
+func_37  0x04002d74  nop_2d74                               vendor no-op (single bx lr)
+func_38  0x04003c30  send_command_emmc                      MMC_CMD write + 3-retry poll on completion / error bits
+func_39  0x04003d68  configure_emmc_pins                    program IO_CTRL0[0..6] from bootrom 0x7d98 pinmux table, mode = PERISTAT[9:8]
+func_3a  0x040050c0  initialize_uart0                       PL011 bring-up: CRG[0x1b8/0x1bc] gate clocks, IBRD=13/FBRD=1/LCR_H=0x70/CR=0x301
+func_3b  0x0400512c  disable_uart0                          clear UART_CR bit 0
+func_3c  0x04005170  uart0_read                             blocking byte read; on framing/parity error: clear RSR, return -1
+func_3d  0x040051a0  uart0_has_rx_data                      return (FR ^ 0x10) >> 4 & 1
+func_3e  0x04005234  timer_get_value                        ~TIMER0.VALUE (since timer counts down)
+func_3f  0x04005244  get_wait_ticks(ms)                     vendor-fixed return 3000
+func_40  0x0400524c  update_timer_0_value                   refresh SRAM[0x180..0x184] timer delta from current TIMER0.VALUE
+func_41  0x0400514c  uart0_write(byte)                      poll UART_FR.TXFF clear, write byte to UART_DR
+func_42  0x04003410  uart0_wait_start_frame                 5-retry probe: send 5× ' ', wait for 0xAA reply; return 1 on hit, 0 after timeout (then '\n' + disable_uart0)
+func_43  0x04003354  uart0_recv_payload                     CRC-frame receive loop: state 1/2/4 → ack 0xAA/0x55/0xAA + callback; exits when SYSCTRL[0x150] == "EMMC" magic (0x454d4d43)
+func_44  0x040034e0  uart0_recv_signed_image(dst, size)     receive signed image frames; tracks size mismatch flag; returns 0 on END / -1 on mismatch or 256-retry timeout
+func_45  0x04003580  uart0_proto_handshake                  single-frame handshake; on END writes "ziju"/"DOWN" magics into SYSCTRL[0x140/0x13c], sets SYSCTRL[0x154]=1
+func_46  0x0400795c  media_sub_c                            write 0x530f failure status into SYSCTRL[0x140]
+func_47  0x040077a8  media_sub_a                            wrapper: read SRAM[0x264] desc ptr, tail-call media_sub_a_inner
+func_48  0x040077b8  media_sub_b                            alloc 2636-byte SDIO descriptor object + sub-buffers, populate vendor cmd table from 0x7f68
+func_49  0x0400422c  media_init_d                           SDIO0 controller bring-up: PWREN→CTRL=7 reset→PIO mode→CMD0/CMD8/ACMD41/CMD2/CMD3/CMD7/CMD16 sequence via send_command_sdio0
+func_4a  0x04004d8c  media_program_b                        SD-card MBR-aware sector loader: read block 0, check 0x55/0xaa MBR signature, copy partition or raw via callback
+func_4b  0x04004900  media_finalize_b(dst, src, len)        block-copy + CRC verify — outermost shape captured; inner multi-stage state machine not enumerated
+func_4c  0x04005468  klad_verify_rsa(src, len)              18-instr wrapper around media_finalize_b — on success writes 0x81000000 to SYSCTRL[0x130] and "DOWN" magic to SYSCTRL[0x148]
+func_4d  0x04001df8  klad_alt_dispatch(ctx)                 walk FLASH in 64K slots looking for "MBSB" magic; on miss clear SYSCTRL[0x14]/[0x10] bits, return -1
+func_4e  0x04001e88  klad_alt_e88(boot_pin, err)            jump-table of error status reporters (uart0_send_status 0x{30..34}, 0x31)
+func_4f  0x04000568  klad_post_unlock(tag, class, size)     4-way dispatch on boot_type tag: "safg"→klad_verify_rsa, "safh"→alt_media_finalize_buf, "safe"→uart0_recv_signed_image, else memcpy SRAM→DDR
+func_50  0x04001150  klad_validate_header(ctx)              load OTP slot 0x100a0050..0x100a006c (8 words = vendor fused hash anchor), strncmp against header signature
+func_51  0x0400136c  klad_finalize(ctx)                     alloc 2×64B hash bufs, run SHA chain (init→load_const→update→chunk×2→close), call klad_finalize_check, write DDR target into ctx[44]
+func_52  0x040016ac  klad_check_b                           SD/USB-fastboot variant of klad_load_keys — media_init_a/b/c + media_program_a then alloc/parse/validate/dispatch chain
+func_53  0x040018b8  klad_check_a                           SDIO-media variant — alt_media_init + alt_media_program then same chain
+func_54  0x04000868  klad_dispatch_sig(ctx,msg_sz,off,sig,mod)  Full RSA hardware driver: klad_setup (SHA the message) → RSA0[0x54] mode reg → stream modulus into [0x58] → stream signature into [0x5c] → cmd 5 + 200ms wait → read recovered M from [0x64] → second op cmd=0x72|... → PKCS#1 padding parse via bootrom 0x7e28 lookup table → strncmp embedded digest vs SHA(message). 509 instr, now fully inlined.
+func_55  0x0400072c  klad_setup(src, size, hash_ctx_out)    SHA message-padding wrapper: snapshot 120B past msg, alloc SHA ctx, append SHA-2 padding in-place (0x80 + zeros + 64-bit BE bit-length), drive sha_init/sha_compute/sha_write_output, RESTORE original bytes. Non-destructive hash of arbitrary range. 79 instr.
+
+Reset trampoline (covered by re/start.S, not in the func_N enumeration):
+
+  0x04000000  _entry                  B _start
+  0x04000004  exception vectors       all branch to 0x00000100 (post-remap SDRAM)
+  0x0400003c  _magic                  .word 0x12345678
+  0x04000040  clear_remap_rom_ptr     0x0400009c
+  0x04000044  clear_remap_ptr         0x04016500
+  0x04000048  _start                  CPSR setup → disable_ctrl_features → stack → configure_soc_clocks → zero SDRAM[0..0x268] → main → copy clear_remap thunk → jump
+  0x0400009c  clear_remap thunk       sets SC_CTRL.bit8, jumps to *(SDRAM_START)
+  0x04000100  _dead_loop              triggers SC_SYSRES soft-reset, spins
+
+Hardware-driver leaves not given func_N indices (utility leaves shared
+across multiple callers, easier to reference by address):
+
+UART frame parser:
+  0x4002ee4  receive_frame(frame)     consumes one CRC-checksummed frame from UART0 RX into a 28-byte descriptor; returns state code (1=ENTER, 2=DATA, 4=END)
+
+SDIO0/SD wire-protocol leaves:
+  0x4003ce0  send_command_sdio0(cmd,arg,sync)  CMD register write + completion poll
+  0x4006cb8  sdio_read_block(dst)             single 512B block read via DATA FIFO
+  0x4006cc0  sdio_write_block(src)            single 512B block write
+  0x4007898  media_sub_b_setup(desc)          descriptor population tail (split from media_sub_b for size)
+  0x4007ae8  media_sub_a_inner(desc)          block-read worker driven by media_sub_a
+
+KLAD / RSA0 / SPACC hardware-driver primitives (the actual RSA0/SPACC
+register sequences + SHA chain):
+  0x40006e0  sha_init(ctx)                  SHA hardware/context init via SPACC (called from klad_setup)
+  0x4000654  sha_compute(src)               drive SPACC over the SHA-padded buffer
+  0x4003bcc  sha_write_output(dst_ctx)      emit digest to caller-supplied output area
+  0x40006a4  rsa0_kick(mode, ticks)         kick RSA0 hardware engine; runs until done or timeout
+  0x4001314  klad_check_step                pre-step in klad_finalize
+  0x4001b40  klad_alt_step                  pre-step in klad_alt_e88 error recovery
+  0x40036c4  klad_sha_init(a, b)            SHA context init (chained from klad_finalize)
+  0x4003858  klad_sha_finalize              vendor-specific finalize before chunk-feed
+  0x400122c  klad_load_const                load constants from bootrom 0x7e28 (was inside klad_validate_header's prologue)
+  0x40038dc  klad_sha_update(arg)           feed one SHA block
+  0x400373c  klad_sha_chunk(a, len)         feed addr+len chunk
+  0x40037e4  klad_sha_chunk2(a, len)        feed second chunk variant
+  0x400390c  klad_sha_close                 close SHA context, output digest
+  0x4000614  klad_finalize_check(v,sz,len)  compare digest against expected, return 0/-1
+  0x40057dc  alt_media_program              alt-media writer (klad_check_a path)
+  0x4005740  alt_media_finalize_buf         alt-media completion (klad_post_unlock "safh" path)
