@@ -63,8 +63,8 @@ readiness, and static compatibility analysis is not exhausted.
 
 The earlier ISP digital-gain conclusion was overstated. Majestic strings
 alone do not establish that the relevant branch applies to CV2005, that
-sensor digital gain must remain at 1x, or that the stock digital-extension
-records should be disabled. isp.aGain must not be equated with ISP digital
+sensor digital gain must remain at 1x, or that the stock
+digital-extension records should be disabled. isp.aGain must not be equated with ISP digital
 gain. Numerical table agreement, callback semantics, and actual runtime
 gain policy remain separate questions.
 
@@ -212,3 +212,80 @@ Conclusion: The $(error ...) blocker was removed in dbace77. The preserved
 musl-linked build is the current build baseline; runtime and hardware
 validation remain pending.
 Status: REMOVED — build attempt enabled; no hardware validation claimed.
+
+## CV2005 destination callback-registration ABI verified (2026-11-20)
+
+<!-- CV2005_DESTINATION_CALLBACK_REGISTRATION_ABI_20261120 -->
+
+Evidence:
+- Destination majestic: analysis/cv2005_destination_abi_20261118_224107_168420/rootfs/usr/bin/majestic
+- Destination CV2003 sensor library: analysis/cv2005_destination_abi_20261118_224107_168420/rootfs/usr/lib/sensors/libsns_cv2003.so
+- Built CV2005 library: analysis/github_cv2005_build_44792107411/artifacts/libsns_cv2005.so
+
+Majestic exports all six MPI registration symbols required by CV2005:
+
+```text
+ot_mpi_isp_sensor_reg_callback
+ot_mpi_isp_sensor_unreg_callback
+ot_mpi_ae_sensor_reg_callback
+ot_mpi_ae_sensor_unreg_callback
+ot_mpi_awb_sensor_reg_callback
+ot_mpi_awb_sensor_unreg_callback
+```
+
+It also exports memcpy_s, memset_s, and snprintf_s. The destination
+CV2003 sensor library imports the same six MPI registration symbols and
+the same secure-libc helpers. CV2005 imports the identical set.
+
+The destination CV2003 module and built CV2005 module both export a
+48-byte sensor object:
+
+```text
+CV2003: g_sns_cv2003_obj, size 48
+CV2005: g_sns_cv2005_obj, size 48
+```
+
+Both objects populate callback pointers at offsets 0x00, 0x04, 0x08,
+0x10, 0x14, 0x20, 0x24, 0x28, and 0x3c. All remaining fields are zero.
+This supports the same otispsnsexpfunc callback-table layout.
+
+Both modules expose cis_register_callback and cis_unregister_callback,
+plus cis_i2c_init, cis_i2c_exit, cis_write_reg, cis_read_reg,
+cis_init_attr, cis_wdr_range_check, and cis_delay_ms.
+
+Disassembly confirmed an identical registration sequence:
+
+```text
+1. Validate pipe and registration arguments.
+2. Lock the per-pipe mutex.
+3. Allocate/zero sensor state on first registration.
+4. Call ot_mpi_isp_sensor_reg_callback(dev, state_id, ISP callbacks).
+5. Call ot_mpi_ae_sensor_reg_callback(dev, AE library, state_id, AE callbacks).
+6. Call ot_mpi_awb_sensor_reg_callback(dev, AWB library, state_id, AWB callbacks).
+```
+
+Both implementations read the state identifier from sensor-state offset
+0x1c and pass it in the same MPI argument positions.
+
+Both registration structures use these offsets:
+
+```text
+0x00 AE algorithm-library pointer
+0x04 AWB algorithm-library pointer
+0x08 ISP callback table
+0x38 AE callback table
+0x70 AWB callback table
+```
+
+Conclusion: CV2005 is compatible with the inspected destination runtime
+at the MPI symbol, registration-call-sequence, registration-structure,
+ISP/AE/AWB callback-table placement, and 48-byte sensor-object layout
+levels.
+
+Scope: this establishes callback-registration ABI compatibility only.
+It does not establish correct runtime behavior of individual CV2005
+callbacks, initialization, exposure/gain policy, MIPI transfer, ISP
+calibration transfer, or camera operation.
+
+Status: VERIFIED — CALLBACK-REGISTRATION ABI; individual callback
+semantics remain unverified.
