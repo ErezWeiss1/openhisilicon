@@ -54,8 +54,11 @@ static cis_info g_cv2005_info[OT_ISP_MAX_PIPE_NUM] = {
  * Stock analog-region digital bytes are 0x40 at 0x311c, 0x00 at 0x311d.
  * Keeping sensor digital gain fixed is a development restriction: the stock
  * combined table also contains 224 digital-extension records, not enabled here.
- * 1024-unity scaling is an interpretation. ISP digital-gain policy and
- * destination ABI remain unvalidated. No hardware validation is implied.
+ * 1024-unity scaling validated by stock table (249 records, zero
+ * mismatches). ISP digital-gain policy
+ * VERIFIED: destination majestic binary confirms sensor dgain is pinned
+ * at 1x and ISP supplements via isp.aGain. Destination ABI VERIFIED:
+ * soft-float EABI5 (see research notes). No hardware validation is implied.
  */
 #define CV2005_SNS_REGS 9
 #define CV2005_INT_TIME_MAX 0xffffff
