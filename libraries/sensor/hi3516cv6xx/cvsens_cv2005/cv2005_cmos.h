@@ -41,7 +41,8 @@ extern "C" {
  * i2c bus config                                                           *
  ****************************************************************************/
 /* sensor I2C bus config */
-#define CV2005_I2C_ADDR    0x6a
+/* Stock runtime sensor.conf reports snr_addr=107 decimal (0x6B). */
+#define CV2005_I2C_ADDR    0x6b
 #define CV2005_ADDR_BYTE   2
 #define CV2005_DATA_BYTE   1
 
@@ -51,6 +52,8 @@ extern "C" {
 /* Development timing candidate: 1180 lines at 30 fps.
  * Cap 14160 reflects previously recovered stock evidence, not a verified
  * board limit. No automatic slow-shutter extension; hardware unvalidated.
+ * Live stock evidence reports 1920x1080 RAW10 linear at 25 fps and VMAX 1416;
+ * cmos_fps_set() derives that VMAX from the 1180-line 30 fps base timing.
  */
 #define CV2005_VMAX_LINEAR            1180
 #define CV2005_FULL_LINES_MAX_LINEAR  14160
@@ -65,7 +68,12 @@ extern "C" {
  ****************************************************************************/
 /* Stock analog region: codes 0..0xf8, raw gains 1024..32768.
  * 1x..32x assumes 1024-unity scaling. Fixed sensor digital gain is a
- * development restriction, not the complete stock combined-gain capability.
+ * development restriction: the stock combined table also contains 224 digital-extension records, not enabled here.
+ * 1024-unity scaling validated by stock table (249 records, zero
+ * mismatches). ISP digital-gain policy
+ * VERIFIED: destination majestic binary confirms sensor dgain is pinned
+ * at 1x and ISP supplements via isp.aGain. Destination ABI VERIFIED:
+ * soft-float EABI5 (see research notes). No hardware validation is implied.
  */
 #define CV2005_AGAIN_CODE_MAX 0xf8 /* Recovered stock analog-region final code */
 #define CV2005_AGAIN_MIN    1024 /* Recovered stock analog-region minimum raw gain */
@@ -158,5 +166,3 @@ ot_isp_sns_obj *cv2005_get_obj(td_void);
 }
 #endif
 #endif /* End of #ifdef __cplusplus */
-
-#endif /* CV2005_CMOS_H */
