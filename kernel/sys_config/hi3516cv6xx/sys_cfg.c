@@ -45,6 +45,10 @@
 #define SENSOR_NAME_SP2308 "sp2308"
 /* CV2003, 24 MHz: "CV2003_MIPI_24Minput_2lane" in the vendor's CV608 firmware */
 #define SENSOR_NAME_CV2003 "cv2003"
+/* CV2005, 24 MHz: stock ipcam declares 24M input; internal ID 28 selects
+ * clock field 4 with enable at 0x11018440 (see CV2005 clock-ID mapping note).
+ */
+#define SENSOR_NAME_CV2005 "cv2005"
 /*
  * VS4388, 24 MHz -- inferred, not read: the vendor's CV610 application sets
  * the sensor clock itself, 24 MHz for one group of sensor types and 27 MHz
@@ -240,7 +244,7 @@ static int parse_sensor_index(char *s, int s_len)
     }
     line = strsep(&s, "=");
     if (line == NULL) {
-        printk("FUNC:%s line:%d  err sensor index: [%s] \n", __FUNCTION__, __LINE__, s);
+        printk("FUNC:%s line:%d  err sensor index: [%s] ", __FUNCTION__, __LINE__, s);
         return index;
     }
 
@@ -327,6 +331,11 @@ static unsigned int parse_sensor_clock(const char *name, unsigned int name_len)
                (strncmp(SENSOR_NAME_CV2003, name, len) == 0) ||
                (strncmp(SENSOR_NAME_VS4388, name, len) == 0)) {
         clock = 0x4001;  /* 24M */
+    } else if (strncmp(SENSOR_NAME_CV2005, name, len) == 0) {
+        /* Stock ID 28: selector 4, clock enable bit 4.
+         * Stock declares 24 MHz input; physical MCLK remains unverified.
+         */
+        clock = 0x4010;
     } else if ((strncmp(SENSOR_NAME_IMX335, name, len) == 0) ||
                (strncmp(SENSOR_NAME_IMX662, name, len) == 0) ||
                (strncmp(SENSOR_NAME_IMX415, name, len) == 0) ||
