@@ -37,7 +37,7 @@ Push status: pushed to origin/master; origin/master tracking configured.
 
 9. Destination ABI and ISP digital-gain policy documented in ce4c261.
 
-10. CV2005 Makefile build blocker removed in dbace77.
+10. CV2005 Makefile blocker removed in dbace77.
 
 11. GitHub Actions run 44792107411 successfully built the current CV2005
     source with the OpenIPC Hi3516CV100 musl toolchain.
@@ -187,3 +187,81 @@ This checkpoint supersedes older statements identifying run 44792107411
 as the current build baseline. It does not upgrade earlier gain-policy,
 MIPI-rate, initialization-table, or SDK-compatibility claims merely
 because the source compiled.
+
+=== LIVE STOCK RUNTIME RECONCILIATION (2026-11-22) ===
+
+<!-- CV2005_LIVE_RUNTIME_RECONCILIATION_20261122 -->
+
+Source evidence:
+- Stock root-shell read-only collection on 192.168.1.23.
+- Running stock application /tmp/ipcam, MD5
+  f0b20a72309af97cdda9f3d4c50b9ac4.
+- Stock application archive /usr/app/bin/ipcam.lzma, MD5
+  edbc2e5fa9a0678a7ef6f610db2ceb8b.
+- Existing CV2005 disassembly parts generated from the MD5-matched
+  ipcam.analysis artifact.
+- CV2005 research notes and decoded profile analysis.
+
+Live stock configuration:
+- Sensor: CV2005.
+- I2C address: 107 decimal, 0x6B.
+- Sensor ID registers: 0x3002=0x05, 0x3003=0x20; ID 0x0520.
+- Active image mode: 1920x1080 RAW10, RGGB, linear WDR, MIPI.
+- Active frame rate: 25 fps; live VI reports 561 received and sent frames,
+  zero lost frames, and zero VB failures.
+- Live pipeline: VI pipe 0 -> VPSS group 0 -> VENC channels 0 and 1.
+- Live AE state: AE line 1410, exposure 87066, integration time 637288,
+  analog gain 2221, sensor digital gain 1024, ISP digital gain 1032,
+  ISO 218, VMAX 1416.
+- Live ISP black level: R=1006, GR=1008, GB=1008, B=1006.
+- Live MIPI: lane mode 2+2, active data lanes 1 and 3, RAW10 1920x1080,
+  WDR none, data-rate setting x1. The displayed x1 setting does not itself
+  establish Mbps.
+
+Stock binary reconciliation:
+- Stock CV2005 initialization routine is at 0x0044D968.
+- Stock initialization table is at VA 0x006F9898 and contains 30
+  address/value pairs.
+- Stock startup order is reset 0x3004=1, reset 0x3004=0, 1 ms delay,
+  30 table writes, queued sync writes, then 0x3000=0.
+- Stock sync descriptor defines eight registers:
+  0x3048, 0x3049, 0x304A, 0x3118, 0x311C, 0x311D, 0x301C, 0x301D.
+- Stock sync update policy compares current and previous data and marks
+  only changed registers.
+- The stock descriptor does not include 0x301E.
+
+Driver reconciliation result:
+- The existing eight-register sync layout is aligned with stock.
+- The selective current/previous update policy is aligned with stock.
+- The two-frame queued-write delay is aligned with stock.
+- The 30-entry initialization table and reset/delay/table/stream ordering
+  are aligned with stock.
+- The 249-entry analog-gain formula is aligned with the recovered stock
+  analog region.
+- Sensor digital gain remains fixed at 1024 in the analog region; ISP
+  digital gain remains a separate supplement path.
+- The driver's 1180-line/30 fps base timing derives VMAX 1416 at 25 fps,
+  matching live stock VMAX.
+
+Correction applied:
+- CV2005_I2C_ADDR changed from 0x6A to 0x6B in cv2005_cmos.h.
+- Commit: 32d9657f9efa776eac9d7cd06da3e91c8efa346d.
+- This correction is required before any hardware deployment or sensor
+  register write.
+
+Remaining reconciliation:
+- Confirm that the destination OpenIPC configuration requests 25 fps and
+  supplies the resulting VMAX 1416 to the sensor.
+- Reconcile the destination MIPI PHY configuration with live stock lane
+  mode 2+2, active lanes 1 and 3, RAW10, and 1920x1080.
+- Treat 465 Mbps as stock-banner-derived evidence, not independently
+  validated by the live MIPI x1 display field.
+- Decide whether OpenIPC will load decoded stock day.ini/night.ini profiles
+  or rely on the driver's embedded stock ISP defaults. These are distinct
+  calibration mechanisms.
+- Retain startup validation guards as development safeguards; they are
+  stricter than the recovered stock routine and are not stock-validated.
+- Keep slow-frame extension disabled until stock behavior is established.
+
+No camera configuration, application restart, sensor-register write, module
+load/unload, reboot, or flash operation was performed for this reconciliation.
