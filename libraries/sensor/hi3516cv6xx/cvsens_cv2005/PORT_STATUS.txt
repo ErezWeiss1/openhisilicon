@@ -265,3 +265,40 @@ Remaining reconciliation:
 
 No camera configuration, application restart, sensor-register write, module
 load/unload, reboot, or flash operation was performed for this reconciliation.
+
+=== SUCCESSFUL I2C-CORRECTED BUILD (2026-11-22) ===
+
+<!-- CV2005_CI_BUILD_RUN9_20261122 -->
+
+Workflow: Build CV2005 sensor library
+Run number: 9
+Conclusion: passed
+Source commit: 7cb218ab297076a8496f41136cae918cad5a54bf
+Commit title: Fix unterminated CV2005 header guard
+Commit URL:
+https://github.com/ErezWeiss1/openhisilicon/commit/7cb218ab297076a8496f41136cae918cad5a54bf
+
+This successful build includes the stock I2C-address correction:
+- CV2005_I2C_ADDR changed from 0x6A to 0x6B.
+- Stock runtime sensor.conf reports snr_addr=107 decimal (0x6B).
+
+It also includes the header-guard repair required after the prior
+unterminated-#ifndef build failure.
+
+Build scope:
+- Compile and link validation only.
+- No artifact hashes, sizes, ELF inspection, deployment, flashing, camera
+  test, sensor startup, MIPI acceptance, ISP calibration transfer, image
+  quality, or long-run stability validation has yet been recorded for this
+  run.
+
+Current build baseline:
+- Build CV2005 sensor library run 9.
+- Source commit 7cb218ab297076a8496f41136cae918cad5a54bf.
+- This supersedes failed run 45066356335 as the current build baseline.
+- It does not supersede the manifest-verified artifact inspection of run
+  44821720695 until the run-9 artifacts are downloaded and their hashes
+  recorded.
+
+No camera configuration, application restart, sensor-register write, module
+load/unload, reboot, or flash operation was performed for this checkpoint.
