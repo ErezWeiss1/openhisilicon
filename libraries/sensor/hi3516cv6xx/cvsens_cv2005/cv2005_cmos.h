@@ -41,8 +41,13 @@ extern "C" {
  * i2c bus config                                                           *
  ****************************************************************************/
 /* sensor I2C bus config */
-/* Stock runtime sensor.conf reports snr_addr=107 decimal (0x6B). */
-#define CV2005_I2C_ADDR    0x6b
+/* Stock runtime sensor.conf reports snr_addr=107 decimal (0x6B, 7-bit).
+ * The cv6xx framework stores the 8-bit I2C address: cis_i2c_init() and
+ * cv2005_read_reg() shift right by 1 for the kernel, and the ISP sync
+ * dev_addr carries the 8-bit form (sp2308 stores 0x78 for 7-bit 0x3c).
+ * 0xD6 is 0x6B << 1.
+ */
+#define CV2005_I2C_ADDR    0xd6
 #define CV2005_ADDR_BYTE   2
 #define CV2005_DATA_BYTE   1
 
@@ -134,7 +139,7 @@ extern "C" {
  * sensor other configs                                                     *
  ****************************************************************************/
 #define STANDARD_FPS              30
-#define FLICKER_FREQ            (50 * 256)  /* light flicker freq: 50Hz, accuracy: 256 */
+#define FLICKER_FREQ            (50 * 256)  /* light flicker freq, 50Hz, accuracy 256 */
 #define INIT_EXP_DEFAULT_LINEAR   130000
 #define AE_COMENSATION_DEFAULT    0x40
 /* Black level: 14-bit ISP scale, 64 DN at 10 bits, what the vendor's ISP runs */
