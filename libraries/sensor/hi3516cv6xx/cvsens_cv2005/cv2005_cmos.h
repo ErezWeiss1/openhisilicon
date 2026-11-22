@@ -166,3 +166,4 @@ ot_isp_sns_obj *cv2005_get_obj(td_void);
 }
 #endif
 #endif /* End of #ifdef __cplusplus */
+#endif
