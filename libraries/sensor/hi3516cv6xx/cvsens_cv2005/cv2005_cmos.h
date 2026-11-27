@@ -41,13 +41,16 @@ extern "C" {
  * i2c bus config                                                           *
  ****************************************************************************/
 /* sensor I2C bus config */
-/* Stock runtime sensor.conf reports snr_addr=107 decimal (0x6B, 7-bit).
+/* Stock runtime sensor.conf reports snr_addr=107 decimal (0x6B, 7-bit),
+ * but board-validated evidence from 2026-11-27 contradicts it: ipctool
+ * reproducibly probes the CV2005 at 7-bit 0x6A on bus 0 (twice, while the
+ * 0x6B-addressed library stalled the bus with "wait idle abort, RIS 0x611").
  * The cv6xx framework stores the 8-bit I2C address: cis_i2c_init() and
  * cv2005_read_reg() shift right by 1 for the kernel, and the ISP sync
  * dev_addr carries the 8-bit form (sp2308 stores 0x78 for 7-bit 0x3c).
- * 0xD6 is 0x6B << 1.
+ * 0xD4 is 0x6A << 1.
  */
-#define CV2005_I2C_ADDR    0xd6
+#define CV2005_I2C_ADDR    0xd4
 #define CV2005_ADDR_BYTE   2
 #define CV2005_DATA_BYTE   1
 
