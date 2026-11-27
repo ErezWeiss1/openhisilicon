@@ -1,8 +1,3 @@
-/* Offline startup candidate, not compiled or board-validated.
- * Recovered table includes 0x3000=0 before payload writes; final write repeats it.
- * Payload uses stock's eight-entry layout (exposure x3, gain x3, frame length x2).
- * Snapshot data by index: do not depend on reg_num/address metadata being ready.
- */
 #include <unistd.h>
 #include "sensor_common.h"
 #include "cv2005_cmos.h"
@@ -25,6 +20,33 @@ td_s32 cv2005_linear_1080p30_10bit_init(cis_info *cis)
     fl = st->fl[0];
     if (fl <= CV2005_SHS_MIN || fl > CV2005_FULL_LINES_MAX_LINEAR) {
         return TD_FAILURE;
+    }
+    /* Board-validation fix (2026-11-27): at ISP start, before the first AE
+     * update, the queued sync snapshot is at reset values (digital gain 0,
+     * VMAX 0, exposure 0). The validation guard below requires a consistent
+     * snapshot and silently returned TD_FAILURE, so the 30-entry init table
+     * never executed and the sensor was never programmed. Seed a reset-state
+     * snapshot with the defaults the AE would queue (1x digital gain, VMAX
+     * = frame length, longest in-frame exposure), which is what the stock
+     * routine's queued sync writes carry at startup. Indices follow the
+     * sync payload order: 0-2 exposure, 3 again, 4-5 dgain, 6-7 VMAX. */
+    if (st->regs_info[0].i2c_data[4].data == 0 &&
+        st->regs_info[0].i2c_data[5].data == 0) {
+        st->regs_info[0].i2c_data[4].data = CV2005_DGAIN_1X & 0xff;
+        st->regs_info[0].i2c_data[5].data = (CV2005_DGAIN_1X >> 8) & 0xff;
+    }
+    if (st->regs_info[0].i2c_data[6].data == 0 &&
+        st->regs_info[0].i2c_data[7].data == 0) {
+        st->regs_info[0].i2c_data[6].data = fl & 0xff;
+        st->regs_info[0].i2c_data[7].data = (fl >> 8) & 0xff;
+    }
+    if (st->regs_info[0].i2c_data[0].data == 0 &&
+        st->regs_info[0].i2c_data[1].data == 0 &&
+        st->regs_info[0].i2c_data[2].data == 0) {
+        td_u32 shs_dft = fl - CV2005_SHS_FL_MARGIN;
+        st->regs_info[0].i2c_data[0].data = shs_dft & 0xff;
+        st->regs_info[0].i2c_data[1].data = (shs_dft >> 8) & 0xff;
+        st->regs_info[0].i2c_data[2].data = (shs_dft >> 16) & 0xff;
     }
     for (i = 0; i < 8; ++i) {
         data[i] = st->regs_info[0].i2c_data[i].data;
