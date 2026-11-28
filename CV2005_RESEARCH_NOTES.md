@@ -1,3 +1,155 @@
+## Vendor sensor.conf independently confirms I2C address 0x35 (2026-11-28)
+
+<!-- CV2005_SENSOR_CONF_ADDR_CONFIRMED_20261128 -->
+
+Evidence: vendor overlay file /overlay/custom/sensor.conf, read from the
+live stock-firmware camera over SSH (camera at 192.168.1.111 at time of
+read).
+
+Full file contents:
+
+```text
+sensor=cv2005
+snr_name=cv2005
+snr_addr=107
+snr_reg=12290
+snr_data=5
+snr_reg2=12291
+snr_data2=32
+```
+
+Interpretation:
+
+- snr_addr=107 decimal = 0x6B. On the I2C wire, 7-bit address 0x35
+  appears as 0x6A for writes and 0x6B for reads (low bit selects
+  direction). The vendor configuration therefore stores the 8-bit read
+  form of the same device the bus scan found at 7-bit 0x35.
+- snr_reg=12290 = 0x3002 and snr_reg2=12291 = 0x3003, with expected
+  values 5 (0x05) and 32 (0x20). These are almost certainly the chip-ID
+  registers the vendor firmware reads to identify the CV2005. They give
+  the exact vendor probe sequence for sensor_get_chip-style detection.
+- sensor=cv2005 and snr_name=cv2005 match ipcinfo --short-sensor output.
+
+Three independent sources now agree on the sensor address:
+
+1. Bus 0 scan found exactly one device, at 7-bit 0x35 (no 0x6a/0x6b
+   device, as expected for 7-bit reporting).
+2. Vendor sensor.conf uses snr_addr=107 (0x6B), the 8-bit form of 0x35.
+3. ipcinfo reports the sensor as cv2005, matching the vendor config.
+
+Address-form nuance for the driver:
+
+The corrected driver uses the 8-bit write form 0x6A. The vendor config
+stores 0x6B. Both map to 7-bit 0x35, but which form is correct depends
+on how the sensor library's I2C helper forms the address (some HiSilicon
+sensor libs take the base address and shift it themselves; others take
+the 8-bit form directly). If driver reads ever fail with 0x6A, 0x6B is
+the fallback to try. Record both forms.
+
+Status: VENDOR-SIDE ADDRESS CONFIRMATION; runtime probe with the OpenIPC
+driver remains pending.
+
+## Vendor overlay backed up before flashing (2026-11-28)
+
+<!-- CV2005_VENDOR_OVERLAY_BACKUP_20261128 -->
+
+The vendor overlay was archived from the live camera and verified on the
+PC before any further flashing:
+
+- Camera archive: /tmp/vendor-overlay.tar.gz, 4816 bytes, gzip -t OK.
+  (BusyBox tar on this image lacks -z; `tar caf` produced an uncompressed
+  tar despite the .tgz name. The tar was renamed and compressed with gzip
+  explicitly.)
+- PC copy: /c/Users/User/Downloads/CV2005/vendor-overlay.tar.gz,
+  4816 bytes, identical size; tar tzf lists the same entries.
+
+Archive contents (16 entries):
+
+```text
+custom/
+custom/config/
+custom/config/ipcam.conf
+custom/config/eth_network.conf
+custom/config/user.conf
+custom/config/hw.conf
+custom/config/onvif_user.conf
+custom/sensor.conf
+eth_network.conf
+hw.conf
+ipcam.conf
+mac.conf
+onvif_user.conf
+user.conf
+xiaocao/
+xiaocao/avsdk_backup
+```
+
+The archive may contain credentials (onvif_user.conf, user.conf,
+eth_network.conf). Do not commit it to GitHub or paste its contents
+except sensor.conf, which was reviewed and contains no secrets.
+
+## Flash session status (2026-11-28)
+
+<!-- CV2005_FLASH_SESSION_20261128 -->
+
+Session parameters: TFTP server 192.168.1.3, camera 192.168.1.23 (U-Boot
+session), netmask 255.255.255.0, ethaddr E8:B7:23:45:DF:D0. The camera's
+Linux DHCP address has changed across the session (.158, .104, .111).
+
+Rootfs release artifact (tag/path f027c188) was downloaded and checked:
+- Extracted at 2 MiB: rootfs_4800k.bin, size 4,915,200 bytes.
+- squashfs listing includes usr/lib/sensors/libsns_cv2005.so.
+- SHA256: cc3579855f29c01728bb3dcf5e7565bd554d93b007e5ebea33b9cff791bc9216
+
+U-Boot progress:
+- rootfs loaded at 0x42000000; second load at 0x44000000 failed as
+  reserved memory, so the second copy was loaded at 0x43000000.
+- Both RAM copies compared equal:
+  cmp.b 0x42000000 0x43000000 0x4B0000 -> "Total of 4915200 byte(s)
+  were the same."
+
+NOT YET RUN — flash erase/write/readback. Next U-Boot commands:
+
+```text
+sf probe 0
+sf erase 0x2B0000 0x4B0000
+sf write 0x42000000 0x2B0000 ${filesize}
+sf read 0x43000000 0x2B0000 ${filesize}
+cmp.b 0x42000000 0x43000000 0x12C000
+```
+
+Do not reset unless the write succeeds and the readback compare passes.
+Then `reset`.
+
+After boot, collect:
+
+```text
+dmesg | grep -iE 'wait idle abort|sensor|cv2005' | tail -20
+i2cdetect -r -y 0
+cat /proc/umap/vi | grep -E 'int_cnt|send_cnt'
+ls -l /tmp/snap.jpg
+```
+
+## Build/workflow state (2026-11-28)
+
+<!-- CV2005_BUILD_STATE_20261128 -->
+
+- Branch cv2005-hi3516cv6xx commit 8f5df3d494ce30e29036f957262e9c900f9b4ef0
+  purportedly combines full CV2005 driver sources with the corrected I2C
+  address. Firmware pin update committed/pushed to ErezWeiss1/firmware,
+  branch cv2005-hi3516cv6xx, commit 2245b332c.
+- Workflow 46081322312 FAILED: cv2005_cmos.c:148 references undeclared
+  CV2005_AGAIN_MAX. Suspected header typo (CV2005_GAIN_MAX in a branch);
+  no corrective commit or workflow result recorded yet. This must be
+  fixed and a green build obtained before the next flash candidate is
+  trusted.
+- The downloaded release f027c188 artifact (rootfs_4800k.bin above) implies
+  a successful build for that release, but the exact workflow/commit
+  status for it is not shown in the available evidence.
+
+Scope: documentation only. No runtime probe, MIPI transfer, or camera
+operation has been validated in this checkpoint.
+
 ## CV2005 stage 2 incorporated and musl build verified (2026-11-20)
 
 Stage 2 timing/layout policy is incorporated in commit ce4c261 and present
