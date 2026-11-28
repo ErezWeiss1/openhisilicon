@@ -1,3 +1,60 @@
+# CV2005 on Hi3516CV608: first frames (2026-11-28)
+
+## Result
+The CV2005 streams on OpenIPC Lite. Majestic's `/image.jpg` returned a
+valid 1920x1080 JPEG (107 KB, header ffd8), and the web UI shows a live H.265
+main stream at about 0.8 Mbit/s. This is the first time frames have reached
+VI on this board.
+
+## Validated facts
+- I2C: the CV2005 answers at 7-bit 0x35 on bus 0. It is the only device on
+  the bus. `i2ctransfer -y 0 w2@0x35 0x30 0x02 r2` returns 0x05 0x20.
+  Nothing answers at 0x6a or 0x6b.
+- Framework address: CV2005_I2C_ADDR = 0x6a (8-bit form, 0x35 << 1),
+  commit 8f5df3d. The earlier 0x6A, 0x6B and 0xD4/0xD6 values came from
+  confusing 7-bit and 8-bit addresses.
+- Sensor clock: 0x11018440 reads 0x4010 (commit 2c16925). The sensor
+  needs this MCLK before it emits MIPI.
+- Build: release f027c188 (includes the CV2005_AGAIN_MAX typo fix). The
+  rootfs_4800k.bin SHA-256 is
+  cc3579855f29c01728bb3dcf5e7565bd554d93b007e5ebea33b9cff791bc9216.
+  The flash write was verified against a full 4,915,200-byte readback
+  compare. The libsns_cv2005.so md5 is identical on the PC and the camera
+  (4d476c7ab791bc8456c5fb610bb12d8b).
+
+## Runtime evidence
+- /proc/umap/vi: int_cnt = 245 after 10 s (about 25 fps).
+- /proc/umap/mipi_rx: VC0 reports 1920x1080. Earlier boots showed no data.
+- Majestic autodetected `cv2005_i2c` and used
+  /etc/sensors/cv2005_i2c_1080p.ini. The INI has no I2C address field.
+- Exposure and gain are in range: analog gain 1024, ISP gain 1024,
+  scene luminance 64/255.
+
+## "wait idle abort" messages
+About 38 of these appear at every majestic start. With majestic stopped
+there are 0. One probe of an absent address (0x6b) produces exactly one abort.
+The most likely cause is autodetection probing absent sensor addresses.
+Not yet confirmed: that the probes account for all 38.
+
+## Open items
+1. Boot persistence: at one boot, open_isp and open_sensor_i2c failed with
+   "Operation not permitted". Manual modprobe worked. Reboot and retest.
+2. The web UI shows the sensor as "unknown", although ipcinfo reports
+   cv2005. Probably a missing table entry.
+3. Image quality: the first frame was out of focus (subject too close) and
+   slightly cool. Retest at 1-2 m and tune white balance.
+4. Majestic reports that the IR-cut filter cannot be moved. Set "IR-cut
+   filter" to off if this module has none.
+5. There is no /etc/majestic.yaml until a setting is saved, so majestic runs
+   on built-in defaults.
+6. Dropbear has no SFTP, so use `scp -O` or `ssh host "cat file" > file`.
+
+## Method notes
+The camera was flashed from U-Boot over TFTP: load to 0x42000000, sf erase
+and write at 0x2B0000, read back to 0x43000000, then cmp.b over the full
+0x4B0000 bytes. Verify the entire length. An earlier compare covered only
+0x12C000 bytes.
+
 ## Vendor sensor.conf independently confirms I2C address 0x35 (2026-11-28)
 
 <!-- CV2005_SENSOR_CONF_ADDR_CONFIRMED_20261128 -->
