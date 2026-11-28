@@ -104,6 +104,66 @@ failure explains the first-boot EULA and root-password prompt on every boot.
 Scope: documentation only. No change to the driver or the image was made in
 this checkpoint.
 
+## Overlay persistence deferred; remaining test order; backup gaps (2026-11-28)
+
+<!-- CV2005_PERSISTENCE_DEFERRED_AND_TEST_ORDER_20261128 -->
+
+Decision: overlay persistence is deferred by choice. No change to the
+partition layout, bootargs, U-Boot or the persistent environment will be made
+until stock recovery has been rehearsed. This follows the standing rules in
+this file ("Leave bootargs unchanged") and in the recovery checklist
+("Do not change U-Boot, partition layout, boot arguments or persistent
+environment"). The gain from persistence is convenience only.
+
+Known cost of deferring: every reboot loses majestic settings, brings back the
+first-boot EULA and root-password prompts, and gives a random MAC instead of
+E8:B7:23:45:DF:D0. Mitigation: run the tests below in one session without
+rebooting. A rootfs-only change (for example baking defaults into the image)
+remains possible later without touching partitions or U-Boot; it has not been
+designed or tested.
+
+Terminology: open item 1 above ("Boot persistence") is about the sensor
+modules failing to load at one boot. It is a different problem from overlay
+persistence. After a reboot, /proc/umap/vi reported int_cnt=8285, lost_cnt=0,
+vb_fail_cnt=0, so streaming survived a reboot and item 1 appears satisfied.
+send_cnt=0 in the same output has not been independently interpreted. Item 1
+should be formally closed after one more clean-boot check.
+
+Remaining tests, in this order:
+1. Microphone and speaker demo. Stock used the SoC inner audio codec at
+   8000 Hz ("set inner audio codec ok samplerate 8000"; ai volume 80, ao
+   volume 90); the OpenIPC image loads open_acodec/ai/ao/aio/aenc/adec.
+   Majestic audio is opt-in (audio.enabled, audio.outputEnabled). Not yet
+   checked: whether this "lite" majestic build includes audio options, and
+   the speaker amplifier GPIO.
+2. IR-cut. Stock logs "SmartIR IRDouble switch to night" and "enter night
+   mode", so the stock firmware drives day/night logic. GPIO numbers are
+   expected in the stock hw.conf inside the overlay backup (review for
+   credentials before sharing).
+3. Image quality: retest at 1-2 m, compare with a stock snapshot of the same
+   scene, then tune white balance.
+4. "Unknown" sensor label in the web UI. Origin of the label not yet
+   confirmed; not known to block anything.
+
+Backup gaps found while reading these notes:
+- No raw stock flash dump is recorded on GitHub. Only the vendor overlay
+  archive is recorded. The stock appfs region (0x2B0000, 0x4B0000 bytes) has
+  been overwritten by the OpenIPC rootfs. A working copy of the notes used in
+  chat mentions a "Stock flash SHA256 d444429e...", but it has not been
+  verified here as a full 8,388,608-byte chip dump. Verify its size and
+  contents, then record the hash in this file.
+- Read-only dumps of mtd0 (uboot), mtd3 (config) and mtd4 (data) should be
+  taken from the running camera and stored with SHA-256 hashes, for example
+  `ssh root@CAMERA "cat /dev/mtd3" > mtd3_config.bin`. mtd1 (kernel) was not
+  overwritten by the rootfs flash.
+- Earlier analysis from 2026-11-14 and 2026-11-18 (stock ISP defaults
+  linkage, decoded init table, day/night scene inheritance) exists in a local
+  working copy of the notes but is not in this file's GitHub history, which
+  starts on 2026-11-20. Sync it.
+
+Scope: documentation only. No flash, partition, bootargs or image change was
+made in this checkpoint.
+
 ## Vendor sensor.conf independently confirms I2C address 0x35 (2026-11-28)
 
 <!-- CV2005_SENSOR_CONF_ADDR_CONFIRMED_20261128 -->
