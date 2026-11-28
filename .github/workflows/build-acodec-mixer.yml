@@ -1,0 +1,55 @@
+name: Build acodec_mixer helper
+on:
+  push:
+    branches: [cv2005-hi3516cv6xx]
+    paths:
+      - 'tools/acodec_mixer/**'
+      - '.github/workflows/build-acodec-mixer.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      TOOLCHAIN_URL: https://github.com/OpenIPC/firmware/releases/download/toolchain/toolchain.hisilicon-hi3516cv100.tgz
+      CROSS_COMPILE: arm-openipc-linux-musleabi-
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download musl SDK
+        run: |
+          set -euo pipefail
+          ARCHIVE="$RUNNER_TEMP/toolchain.tgz"
+          SDK="$RUNNER_TEMP/arm-openipc-linux-musleabi_sdk-buildroot"
+          curl -fL --retry 3 --connect-timeout 30 --max-time 300 "$TOOLCHAIN_URL" -o "$ARCHIVE"
+          sha256sum "$ARCHIVE"
+          tar -xzf "$ARCHIVE" -C "$RUNNER_TEMP"
+          test -d "$SDK"
+          if [[ -f "$SDK/relocate-sdk.sh" ]]; then
+            (cd "$SDK" && bash ./relocate-sdk.sh)
+          fi
+          echo "$SDK/bin" >> "$GITHUB_PATH"
+      - name: Build static helper
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          "${CROSS_COMPILE}gcc" -Os -static -Wall -Wextra \
+            -o artifacts/acodec_mixer tools/acodec_mixer/acodec_mixer.c
+          "${CROSS_COMPILE}strip" artifacts/acodec_mixer
+          "${CROSS_COMPILE}readelf" -h artifacts/acodec_mixer | tee artifacts/elf-header.txt
+          grep -Eq 'Class:[[:space:]]+ELF32' artifacts/elf-header.txt
+          grep -Eq 'Machine:[[:space:]]+ARM' artifacts/elf-header.txt
+          sha256sum artifacts/acodec_mixer | tee artifacts/acodec_mixer.sha256
+          ls -l artifacts/acodec_mixer
+      - name: Upload helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: acodec-mixer-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
