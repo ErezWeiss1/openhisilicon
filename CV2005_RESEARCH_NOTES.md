@@ -55,6 +55,55 @@ and write at 0x2B0000, read back to 0x43000000, then cmp.b over the full
 0x4B0000 bytes. Verify the entire length. An earlier compare covered only
 0x12C000 bytes.
 
+## Stock 1440p stream is a 1080p sensor upscaled; stock MAC source (2026-11-28)
+
+<!-- CV2005_STOCK_RESOLUTION_AND_MAC_20261128 -->
+
+Question: VLC reports 1920x1080 for the OpenIPC stream but 2560x1440 for the
+stock firmware stream. Is a higher sensor mode missing from the driver?
+
+Answer: no. The stock firmware captures 1920x1080 from the sensor and scales
+it to 2560x1440 in the VPSS stage. The driver's single 1080p30 linear mode
+matches what the stock sensor path uses.
+
+Evidence (stock boot log, UART capture):
+- Sensor input: "vipipe0, CV2005 MIPI 24M input 2lane 10bit 465Mbps
+  1920x1080 30fps Init OK!"
+- Encoder defaults: "venc chn 0 default attr w2560, h1440, fps25,
+  bitrate3072"; "venc chn 1 default attr w640, h480, fps25, bitrate512".
+- Stream start: "vpss fps-1,-1, w,h 2560,1440" and "vpss grp0, vpss chn0
+  ... width 2560, height 1440, framerate 25, bitrate 3072".
+- Vendor ipcam.conf (from the overlay backup): venc_width0=2560,
+  venc_height0=1440, venc_width1=640, venc_height1=480,
+  snapshot_res_width=704, snapshot_res_height=576.
+- VLC codec information for rtsp://192.168.1.23:554/stream1 (the stock
+  camera's address): H.265, 2560x1440, 25 fps; audio PCM mu-law, 8000 Hz,
+  mono.
+
+Conclusion: the 2560x1440 stock stream is a VPSS upscale of a 1920x1080
+sensor image, so it carries no additional sensor detail. The OpenIPC build
+streaming 1920x1080 is the native sensor resolution. An earlier suggestion
+that the stock firmware might use a second, higher-resolution sensor mode is
+ruled out by this log.
+
+Not tested: whether majestic and this SDK allow a video0 output size above
+the sensor resolution (an upscale), and what it would cost in bitrate and CPU.
+
+Stock MAC source: the stock boot log reads the MAC E8:B7:23:45:DF:D0 from the
+vendor hardware config ("mac E8B72345DFD0" in the vendor init output) and
+sets it on eth0 ("eth0 Hardware address is E8B72345DFD0"). The same value
+is in the backed-up mac.conf and in the U-Boot ethaddr used for TFTP.
+
+OpenIPC MAC diagnosis (fix not yet tested): the OpenIPC image assigns a random
+MAC each boot ("check_mac: assigned 02:c4:47:4d:86:cc") because /overlay is
+not persistent. /init finds the overlay partition by looking for an MTD
+partition named rootfs_data; this board's layout names them config (384K) and
+data (64K), so the lookup is empty and /init falls back to tmpfs. The same
+failure explains the first-boot EULA and root-password prompt on every boot.
+
+Scope: documentation only. No change to the driver or the image was made in
+this checkpoint.
+
 ## Vendor sensor.conf independently confirms I2C address 0x35 (2026-11-28)
 
 <!-- CV2005_SENSOR_CONF_ADDR_CONFIRMED_20261128 -->
