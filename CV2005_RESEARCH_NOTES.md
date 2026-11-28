@@ -149,6 +149,12 @@ except sensor.conf, which was reviewed and contains no secrets.
 
 <!-- CV2005_FLASH_SESSION_20261128 -->
 
+> **SUPERSEDED (2026-11-28):** The flash erase/write/readback described
+> below as "NOT YET RUN" has since been executed and verified with a full
+> 4,915,200-byte readback compare. See "CV2005 on Hi3516CV608: first frames
+> (2026-11-28)" at the top of this file. This section is retained as
+> session history only.
+
 Session parameters: TFTP server 192.168.1.3, camera 192.168.1.23 (U-Boot
 session), netmask 255.255.255.0, ethaddr E8:B7:23:45:DF:D0. The camera's
 Linux DHCP address has changed across the session (.158, .104, .111).
@@ -190,6 +196,14 @@ ls -l /tmp/snap.jpg
 ## Build/workflow state (2026-11-28)
 
 <!-- CV2005_BUILD_STATE_20261128 -->
+
+> **SUPERSEDED (2026-11-28):** The CV2005_AGAIN_MAX build failure below
+> has been resolved. Release f027c188 includes the typo fix (verified in
+> cv2005_cmos.h on this branch, where CV2005_AGAIN_MAX is defined for both
+> the digital-extension and default paths), and the resulting rootfs was
+> flashed successfully — see "CV2005 on Hi3516CV608: first frames
+> (2026-11-28)" at the top of this file. This section is retained as
+> session history only.
 
 - Branch cv2005-hi3516cv6xx commit 8f5df3d494ce30e29036f957262e9c900f9b4ef0
   purportedly combines full CV2005 driver sources with the corrected I2C
