@@ -101,7 +101,7 @@ extern "C" {
 #define CV2005_AGAIN_MAX    262144
 #else
 #define CV2005_GAIN_INDEX_MAX CV2005_AGAIN_CODE_MAX
-#define CV2005_GAIN_MAX    32768
+#define CV2005_AGAIN_MAX    32768
 #endif
 #define CV2005_DGAIN_1X     0x40 /* Recovered stock analog-region digital code 0x0040 */
 #define CV2005_DGAIN_MIN    1024 /* Development restriction: sensor digital gain fixed */
